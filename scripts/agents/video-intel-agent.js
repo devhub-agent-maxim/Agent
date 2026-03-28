@@ -121,39 +121,74 @@ function parseVtt(vtt) {
 
 // ── Step 2: Extract audio → Whisper transcription ────────────────────────────
 
+function findPython() {
+  // Derive Python from yt-dlp location — they share the same Python install.
+  // yt-dlp.exe lives in <PythonHome>\Scripts\, python.exe in <PythonHome>\
+  const ytDlp = findYtDlp();
+  if (ytDlp && ytDlp.includes('Scripts')) {
+    const pyHome = path.dirname(path.dirname(ytDlp));
+    const pyExe  = path.join(pyHome, 'python.exe');
+    if (fs.existsSync(pyExe)) return pyExe;
+  }
+  // Fallback: explicit known paths
+  const candidates = [
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'python.exe'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'python.exe'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python310', 'python.exe'),
+  ];
+  for (const c of candidates) { if (fs.existsSync(c)) return c; }
+  return 'python';
+}
+
 function getTranscriptViaAudio(url, outputDir) {
   const ytDlp = findYtDlp();
   if (!ytDlp) throw new Error('yt-dlp not installed. Run: pip install yt-dlp');
 
-  const audioFile = path.join(outputDir, 'audio.mp3');
-
-  log('Downloading audio...');
+  // Download raw video (no audio extraction — avoids ffprobe codec issues with TikTok)
+  const videoTemplate = path.join(outputDir, 'video.%(ext)s');
+  log('Downloading video...');
   execSync(
-    `"${ytDlp}" --impersonate chrome --extract-audio --audio-format mp3 --audio-quality 5 --no-playlist --no-check-formats -o "${audioFile}" "${url}"`,
-    { timeout: 60000, stdio: 'pipe', encoding: 'utf8' }
+    `"${ytDlp}" --impersonate chrome --no-playlist -o "${videoTemplate}" "${url}"`,
+    { timeout: 90000, stdio: 'pipe', encoding: 'utf8' }
   );
 
-  if (!fs.existsSync(audioFile)) {
-    // yt-dlp may have added extension twice
-    const files = fs.readdirSync(outputDir).filter(f => f.endsWith('.mp3'));
-    if (files.length === 0) throw new Error('Audio download failed');
+  // Find the downloaded video file
+  const videoFile = fs.readdirSync(outputDir).find(f =>
+    f.startsWith('video.') && !f.endsWith('.part')
+  );
+  if (!videoFile) throw new Error('Video download failed — no file found');
+
+  // Use forward slashes — Python and ffmpeg on Windows both accept them, no escaping needed
+  const videoPath = path.join(outputDir, videoFile).replace(/\\/g, '/');
+  const txtPath   = path.join(outputDir, 'transcript.txt').replace(/\\/g, '/');
+  const python    = findPython();
+
+  log(`Transcribing with Whisper (python: ${path.basename(python)})...`);
+
+  // Use Whisper Python API directly — CLI entry point is unreliable on Windows.
+  // Use string concat (not template literal) to avoid backslash escaping issues.
+  const pyScript = [
+    'import whisper',
+    "model = whisper.load_model('base')",
+    "result = model.transcribe('" + videoPath + "', language='en', fp16=False)",
+    "with open('" + txtPath + "', 'w', encoding='utf-8') as f:",
+    "    f.write(result['text'])",
+    "print('OK:', len(result['text']))",
+  ].join('\n');
+
+  const result = spawnSync(python, ['-c', pyScript], {
+    timeout:  180000,
+    encoding: 'utf8',
+    env:      { ...process.env },
+  });
+
+  if (result.status !== 0 || result.error) {
+    const errMsg = (result.stderr || result.error?.message || 'unknown error').slice(0, 300);
+    throw new Error(`Whisper failed: ${errMsg}`);
   }
 
-  const actualAudio = fs.readdirSync(outputDir).find(f => f.endsWith('.mp3'));
-  if (!actualAudio) throw new Error('No mp3 found after download');
-
-  log('Transcribing with Whisper...');
-  const result = spawnSync('python3', ['-m', 'whisper', path.join(outputDir, actualAudio),
-    '--model', 'base', '--output_format', 'txt', '--output_dir', outputDir,
-    '--language', 'en', '--fp16', 'False',
-  ], { timeout: 120000, encoding: 'utf8' });
-
-  if (result.status !== 0) throw new Error(`Whisper failed: ${result.stderr?.slice(0, 200)}`);
-
-  const txtFile = fs.readdirSync(outputDir).find(f => f.endsWith('.txt'));
-  if (!txtFile) throw new Error('Whisper produced no text file');
-
-  return fs.readFileSync(path.join(outputDir, txtFile), 'utf8').trim();
+  if (!fs.existsSync(txtPath)) throw new Error('Whisper produced no transcript file');
+  return fs.readFileSync(txtPath, 'utf8').trim();
 }
 
 // ── Find yt-dlp executable ────────────────────────────────────────────────────
