@@ -759,6 +759,329 @@ docker stop $(docker ps -q --filter name=agent-tools)
 docker run -p 3001:3000 ... agent-tools
 ```
 
+## Deployment
+
+The Agent Tools API supports multiple deployment options for different hosting platforms and infrastructure setups.
+
+### Option 1: Vercel Deployment
+
+Vercel provides serverless deployment with automatic HTTPS, global CDN, and zero-configuration scaling.
+
+#### Prerequisites
+
+- Vercel account ([vercel.com](https://vercel.com))
+- Vercel CLI: `npm install -g vercel`
+
+#### Setup
+
+1. **Configure environment variables in Vercel:**
+
+```bash
+# Using Vercel CLI
+vercel secrets add agent-tools-api-key "your-secure-api-key-here"
+vercel secrets add agent-tools-cors-origins "https://app.example.com,https://dashboard.example.com"
+```
+
+Or via Vercel Dashboard → Project Settings → Environment Variables:
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `API_KEY` | Your secure API key | Authentication key (use strong random value) |
+| `CORS_ALLOWED_ORIGINS` | `https://app.example.com` | Comma-separated allowed origins |
+| `LOG_LEVEL` | `info` | Logging verbosity (error, warn, info, debug) |
+
+2. **Deploy:**
+
+```bash
+# Production deployment
+vercel --prod
+
+# Preview deployment
+vercel
+```
+
+The `vercel.json` configuration includes:
+- **Node.js 18** runtime
+- **1024MB** memory allocation
+- **10 second** max function duration
+- **iad1** region (US East)
+- Automatic builds from `package.json`
+
+#### Health Check Verification
+
+```bash
+curl https://your-app.vercel.app/health
+# Expected: {"status":"ok","uptime":123.456}
+```
+
+#### Limitations
+
+- **Serverless SQLite**: Database resets on each deployment (use external database for persistence)
+- **10 second timeout**: Long-running requests will be terminated
+- **Cold starts**: First request after idle may be slower
+
+### Option 2: Railway Deployment
+
+Railway provides container-based deployment with persistent volumes, databases, and automatic HTTPS.
+
+#### Prerequisites
+
+- Railway account ([railway.app](https://railway.app))
+- Railway CLI: `npm install -g @railway/cli`
+
+#### Setup
+
+1. **Login to Railway:**
+
+```bash
+railway login
+```
+
+2. **Create new project:**
+
+```bash
+railway init
+```
+
+3. **Configure environment variables:**
+
+Via Railway Dashboard → Variables:
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `NODE_ENV` | `production` | Environment mode |
+| `PORT` | `3000` | Server port |
+| `API_KEY` | Your secure API key | Authentication key |
+| `CORS_ALLOWED_ORIGINS` | `https://app.example.com` | Comma-separated allowed origins |
+| `LOG_LEVEL` | `info` | Logging verbosity |
+
+4. **Deploy:**
+
+```bash
+# Deploy to Railway
+railway up
+```
+
+The `railway.json` configuration includes:
+- **Dockerfile-based** deployment
+- **Single replica** (scale via dashboard)
+- **Auto-restart** on failure (max 10 retries)
+- **Health check** at `/health` endpoint (30 second interval)
+
+#### Persistent Storage
+
+Railway provides persistent volumes for SQLite database:
+
+1. Go to your project → Service → Variables
+2. Add mount: `/app/data` → Creates persistent volume
+3. Database persists across deployments
+
+#### Health Check Verification
+
+```bash
+curl https://your-app.railway.app/health
+# Expected: {"status":"ok","uptime":123.456}
+```
+
+#### Monitoring
+
+View logs and metrics in Railway Dashboard:
+- Real-time logs
+- CPU/Memory usage
+- Request metrics
+- Health check status
+
+### Option 3: PM2 Process Management
+
+PM2 provides production process management for Node.js with clustering, auto-restart, and log rotation.
+
+#### Prerequisites
+
+- PM2 installed: `npm install -g pm2`
+- Node.js 18+ installed on server
+
+#### Setup
+
+1. **Build the application:**
+
+```bash
+npm install
+npm run build
+```
+
+2. **Configure environment variables:**
+
+Create `.env` file in project root:
+
+```env
+NODE_ENV=production
+PORT=3000
+API_KEY=your-secure-api-key-here
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://dashboard.example.com
+LOG_LEVEL=info
+```
+
+3. **Start with PM2:**
+
+```bash
+# Start in production mode
+pm2 start ecosystem.config.js --env production
+
+# Or start directly
+pm2 start dist/index.js --name agent-tools-api
+```
+
+The `ecosystem.config.js` configuration includes:
+- **Cluster mode**: Scales across all CPU cores in production
+- **Auto-restart**: Restarts on crashes
+- **Memory limit**: Restarts if exceeds 500MB
+- **Log rotation**: Keeps last 5 log files (10MB each, compressed)
+- **Graceful shutdown**: 10 second timeout
+- **Daily restart**: Automatic restart at 3am (configurable)
+
+#### PM2 Commands
+
+```bash
+# View running processes
+pm2 list
+
+# View logs
+pm2 logs agent-tools-api
+
+# Monitor CPU/Memory
+pm2 monit
+
+# Restart application
+pm2 restart agent-tools-api
+
+# Stop application
+pm2 stop agent-tools-api
+
+# View detailed info
+pm2 show agent-tools-api
+
+# Save PM2 configuration (survive reboots)
+pm2 save
+pm2 startup
+```
+
+#### Health Check Verification
+
+```bash
+curl http://localhost:3000/health
+# Expected: {"status":"ok","uptime":123.456}
+```
+
+#### Production Best Practices
+
+1. **Enable startup script** (auto-start on server reboot):
+```bash
+pm2 startup
+pm2 save
+```
+
+2. **Set up log rotation** (prevent disk space issues):
+```bash
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 5
+pm2 set pm2-logrotate:compress true
+```
+
+3. **Monitor with PM2 Plus** (optional, advanced monitoring):
+```bash
+pm2 link <public-key> <secret-key>
+```
+
+4. **Configure reverse proxy** (nginx recommended):
+```nginx
+server {
+    listen 80;
+    server_name api.example.com;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### Deployment Comparison
+
+| Feature | Vercel | Railway | PM2 |
+|---------|--------|---------|-----|
+| **Deployment Type** | Serverless | Container | Traditional VPS |
+| **Persistent Database** | ❌ No | ✅ Yes | ✅ Yes |
+| **Auto-scaling** | ✅ Automatic | ⚙️ Manual | ⚙️ Cluster mode |
+| **HTTPS** | ✅ Automatic | ✅ Automatic | ⚙️ Manual (nginx) |
+| **Zero-downtime deploys** | ✅ Yes | ✅ Yes | ⚙️ With reload |
+| **Cold starts** | ⚠️ Yes | ❌ No | ❌ No |
+| **Cost** | Free tier available | Free tier available | Server costs only |
+| **Best For** | Stateless APIs, dev/staging | Full-stack apps with DB | Long-running, control, cost optimization |
+
+### Post-Deployment Checklist
+
+After deploying to any platform, verify:
+
+1. **Health endpoint responds:**
+```bash
+curl https://your-domain.com/health
+# Expected: {"status":"ok","uptime":123.456}
+```
+
+2. **Authentication works:**
+```bash
+curl -H "Authorization: Bearer your-api-key" \
+     https://your-domain.com/todos
+# Expected: [] (empty array or existing TODOs)
+```
+
+3. **CORS is configured:**
+```bash
+curl -H "Origin: https://your-allowed-origin.com" \
+     -H "Access-Control-Request-Method: GET" \
+     -X OPTIONS \
+     https://your-domain.com/todos
+# Expected: CORS headers in response
+```
+
+4. **Rate limiting active:**
+```bash
+# Send 101 requests rapidly
+for i in {1..101}; do
+  curl https://your-domain.com/health
+done
+# Expected: 429 Too Many Requests after 100 requests
+```
+
+5. **Logs are being written:**
+- Vercel: Check Vercel Dashboard → Logs
+- Railway: Check Railway Dashboard → Logs
+- PM2: Run `pm2 logs agent-tools-api`
+
+6. **Database persistence (Railway/PM2 only):**
+```bash
+# Create a TODO
+curl -X POST https://your-domain.com/todos \
+     -H "Authorization: Bearer your-api-key" \
+     -H "Content-Type: application/json" \
+     -d '{"title":"Test TODO"}'
+
+# Restart service
+
+# Verify TODO still exists
+curl https://your-domain.com/todos \
+     -H "Authorization: Bearer your-api-key"
+# Expected: TODO from previous request still present
+```
+
 ## Database
 
 The application uses SQLite for persistence. The database file is stored at `data/agent-tools.db` and is automatically created on first run.
