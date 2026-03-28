@@ -1,8 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { CreateTodoInput, UpdateTodoInput } from '../models/todo';
 import { todoRepository } from '../db/todos-repository';
+import { authenticateApiKey } from '../middleware/auth';
 
 const router = Router();
+
+// Apply authentication to all routes
+router.use(authenticateApiKey);
 
 // Validation helpers
 const validateCreateInput = (body: any): { valid: boolean; error?: string } => {

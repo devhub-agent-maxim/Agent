@@ -3,15 +3,26 @@ import app from '../src/index';
 import { todoRepository } from '../src/db/todos-repository';
 
 describe('TODO API', () => {
+  const API_KEY = 'test-key-123';
+
+  beforeAll(() => {
+    process.env.API_KEYS = API_KEY;
+  });
+
   beforeEach(() => {
     // Clear the repository before each test
     todoRepository.clear();
+  });
+
+  afterAll(() => {
+    delete process.env.API_KEYS;
   });
 
   describe('POST /todos', () => {
     it('should create a new todo with valid input', async () => {
       const response = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test Todo', description: 'Test Description' })
         .expect(201);
 
@@ -27,6 +38,7 @@ describe('TODO API', () => {
     it('should create a todo without description', async () => {
       const response = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test Todo' })
         .expect(201);
 
@@ -40,6 +52,7 @@ describe('TODO API', () => {
     it('should trim whitespace from title and description', async () => {
       const response = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: '  Trimmed  ', description: '  Also trimmed  ' })
         .expect(201);
 
@@ -50,6 +63,7 @@ describe('TODO API', () => {
     it('should reject request without title', async () => {
       const response = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ description: 'No title' })
         .expect(400);
 
@@ -59,6 +73,7 @@ describe('TODO API', () => {
     it('should reject request with empty title', async () => {
       const response = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: '   ' })
         .expect(400);
 
@@ -68,6 +83,7 @@ describe('TODO API', () => {
     it('should reject request with non-string title', async () => {
       const response = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 123 })
         .expect(400);
 
@@ -78,6 +94,7 @@ describe('TODO API', () => {
       const longTitle = 'a'.repeat(201);
       const response = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: longTitle })
         .expect(400);
 
@@ -87,6 +104,7 @@ describe('TODO API', () => {
     it('should reject non-string description', async () => {
       const response = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Valid Title', description: 123 })
         .expect(400);
 
@@ -97,6 +115,7 @@ describe('TODO API', () => {
       const longDesc = 'a'.repeat(1001);
       const response = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Valid Title', description: longDesc })
         .expect(400);
 
@@ -108,6 +127,7 @@ describe('TODO API', () => {
     it('should return empty array when no todos exist', async () => {
       const response = await request(app)
         .get('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(200);
 
       expect(response.body).toEqual([]);
@@ -115,12 +135,13 @@ describe('TODO API', () => {
 
     it('should return all todos', async () => {
       // Create some todos
-      await request(app).post('/todos').send({ title: 'Todo 1' });
-      await request(app).post('/todos').send({ title: 'Todo 2' });
-      await request(app).post('/todos').send({ title: 'Todo 3' });
+      await request(app).post('/todos').set('Authorization', `Bearer ${API_KEY}`).send({ title: 'Todo 1' });
+      await request(app).post('/todos').set('Authorization', `Bearer ${API_KEY}`).send({ title: 'Todo 2' });
+      await request(app).post('/todos').set('Authorization', `Bearer ${API_KEY}`).send({ title: 'Todo 3' });
 
       const response = await request(app)
         .get('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(200);
 
       expect(response.body).toHaveLength(3);
@@ -134,10 +155,12 @@ describe('TODO API', () => {
     it('should return a specific todo by id', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Specific Todo', description: 'Find me' });
 
       const response = await request(app)
         .get(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(200);
 
       expect(response.body).toMatchObject({
@@ -151,6 +174,7 @@ describe('TODO API', () => {
     it('should return 404 for non-existent todo', async () => {
       const response = await request(app)
         .get('/todos/non-existent-id')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(404);
 
       expect(response.body.error).toBe('Todo not found');
@@ -161,10 +185,12 @@ describe('TODO API', () => {
     it('should update todo title', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Original Title' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Updated Title' })
         .expect(200);
 
@@ -175,10 +201,12 @@ describe('TODO API', () => {
     it('should update todo description', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test', description: 'Original' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ description: 'Updated' })
         .expect(200);
 
@@ -189,10 +217,12 @@ describe('TODO API', () => {
     it('should update todo completed status', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ completed: true })
         .expect(200);
 
@@ -202,10 +232,12 @@ describe('TODO API', () => {
     it('should update multiple fields at once', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Original', description: 'Original desc' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({
           title: 'New Title',
           description: 'New Description',
@@ -223,10 +255,12 @@ describe('TODO API', () => {
     it('should trim whitespace from updated values', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: '  Trimmed  ', description: '  Also trimmed  ' })
         .expect(200);
 
@@ -237,6 +271,7 @@ describe('TODO API', () => {
     it('should return 404 for non-existent todo', async () => {
       const response = await request(app)
         .put('/todos/non-existent-id')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Updated' })
         .expect(404);
 
@@ -246,10 +281,12 @@ describe('TODO API', () => {
     it('should reject update with no fields', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({})
         .expect(400);
 
@@ -259,10 +296,12 @@ describe('TODO API', () => {
     it('should reject empty title', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: '   ' })
         .expect(400);
 
@@ -272,10 +311,12 @@ describe('TODO API', () => {
     it('should reject non-string title', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 123 })
         .expect(400);
 
@@ -285,11 +326,13 @@ describe('TODO API', () => {
     it('should reject title exceeding 200 characters', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test' });
 
       const longTitle = 'a'.repeat(201);
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: longTitle })
         .expect(400);
 
@@ -299,10 +342,12 @@ describe('TODO API', () => {
     it('should reject non-string description', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ description: 123 })
         .expect(400);
 
@@ -312,11 +357,13 @@ describe('TODO API', () => {
     it('should reject description exceeding 1000 characters', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test' });
 
       const longDesc = 'a'.repeat(1001);
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ description: longDesc })
         .expect(400);
 
@@ -326,10 +373,12 @@ describe('TODO API', () => {
     it('should reject non-boolean completed', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Test' });
 
       const response = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ completed: 'true' })
         .expect(400);
 
@@ -341,34 +390,38 @@ describe('TODO API', () => {
     it('should delete an existing todo', async () => {
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'To Delete' });
 
       await request(app)
         .delete(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(204);
 
       // Verify it's deleted
       await request(app)
         .get(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(404);
     });
 
     it('should return 404 for non-existent todo', async () => {
       const response = await request(app)
         .delete('/todos/non-existent-id')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(404);
 
       expect(response.body.error).toBe('Todo not found');
     });
 
     it('should not affect other todos when deleting one', async () => {
-      const todo1 = await request(app).post('/todos').send({ title: 'Todo 1' });
-      const todo2 = await request(app).post('/todos').send({ title: 'Todo 2' });
-      const todo3 = await request(app).post('/todos').send({ title: 'Todo 3' });
+      const todo1 = await request(app).post('/todos').set('Authorization', `Bearer ${API_KEY}`).send({ title: 'Todo 1' });
+      const todo2 = await request(app).post('/todos').set('Authorization', `Bearer ${API_KEY}`).send({ title: 'Todo 2' });
+      const todo3 = await request(app).post('/todos').set('Authorization', `Bearer ${API_KEY}`).send({ title: 'Todo 3' });
 
-      await request(app).delete(`/todos/${todo2.body.id}`).expect(204);
+      await request(app).delete(`/todos/${todo2.body.id}`).set('Authorization', `Bearer ${API_KEY}`).expect(204);
 
-      const remaining = await request(app).get('/todos').expect(200);
+      const remaining = await request(app).get('/todos').set('Authorization', `Bearer ${API_KEY}`).expect(200);
       expect(remaining.body).toHaveLength(2);
       expect(remaining.body.map((t: any) => t.id)).toEqual([
         todo1.body.id,
@@ -382,6 +435,7 @@ describe('TODO API', () => {
       // Create
       const created = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Lifecycle Test', description: 'Testing CRUD' })
         .expect(201);
 
@@ -390,6 +444,7 @@ describe('TODO API', () => {
       // Read single
       const fetched = await request(app)
         .get(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(200);
 
       expect(fetched.body.title).toBe('Lifecycle Test');
@@ -397,6 +452,7 @@ describe('TODO API', () => {
       // Update
       const updated = await request(app)
         .put(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ completed: true, description: 'Updated description' })
         .expect(200);
 
@@ -404,37 +460,43 @@ describe('TODO API', () => {
       expect(updated.body.description).toBe('Updated description');
 
       // Read list
-      const list = await request(app).get('/todos').expect(200);
+      const list = await request(app).get('/todos').set('Authorization', `Bearer ${API_KEY}`).expect(200);
       expect(list.body).toHaveLength(1);
 
       // Delete
       await request(app)
         .delete(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(204);
 
       // Verify deletion
       await request(app)
         .get(`/todos/${created.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(404);
     });
 
     it('should handle multiple todos independently', async () => {
       const todo1 = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'First' });
 
       const todo2 = await request(app)
         .post('/todos')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ title: 'Second' });
 
       // Update only first
       await request(app)
         .put(`/todos/${todo1.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .send({ completed: true });
 
       // Verify second is unchanged
       const fetchedTodo2 = await request(app)
         .get(`/todos/${todo2.body.id}`)
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(200);
 
       expect(fetchedTodo2.body.completed).toBe(false);
@@ -445,6 +507,7 @@ describe('TODO API', () => {
     it('should serve Swagger UI at /api-docs', async () => {
       const response = await request(app)
         .get('/api-docs/')
+        .set('Authorization', `Bearer ${API_KEY}`)
         .expect(200);
 
       expect(response.text).toContain('swagger-ui');

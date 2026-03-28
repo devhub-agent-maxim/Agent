@@ -6,9 +6,16 @@ import fs from 'fs';
 import path from 'path';
 
 describe('TODO Persistence', () => {
+  const API_KEY = 'test-key-123';
+
   beforeAll(() => {
+    process.env.API_KEYS = API_KEY;
     // Ensure database is initialized
     initializeDatabase();
+  });
+
+  afterAll(() => {
+    delete process.env.API_KEYS;
   });
 
   beforeEach(() => {
@@ -20,6 +27,7 @@ describe('TODO Persistence', () => {
     // Create a todo
     const response = await request(app)
       .post('/todos')
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({ title: 'Persist Test', description: 'Testing persistence' })
       .expect(201);
 
@@ -36,9 +44,9 @@ describe('TODO Persistence', () => {
 
   it('should persist multiple todos and retrieve them in order', async () => {
     // Create multiple todos
-    await request(app).post('/todos').send({ title: 'First Todo' });
-    await request(app).post('/todos').send({ title: 'Second Todo' });
-    await request(app).post('/todos').send({ title: 'Third Todo' });
+    await request(app).post('/todos').set('Authorization', `Bearer ${API_KEY}`).send({ title: 'First Todo' });
+    await request(app).post('/todos').set('Authorization', `Bearer ${API_KEY}`).send({ title: 'Second Todo' });
+    await request(app).post('/todos').set('Authorization', `Bearer ${API_KEY}`).send({ title: 'Third Todo' });
 
     // Retrieve all todos directly from repository
     const todos = todoRepository.findAll();
@@ -53,6 +61,7 @@ describe('TODO Persistence', () => {
     // Create a todo
     const created = await request(app)
       .post('/todos')
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({ title: 'Original Title', description: 'Original Description' })
       .expect(201);
 
@@ -61,6 +70,7 @@ describe('TODO Persistence', () => {
     // Update the todo
     await request(app)
       .put(`/todos/${todoId}`)
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({
         title: 'Updated Title',
         description: 'Updated Description',
@@ -81,17 +91,20 @@ describe('TODO Persistence', () => {
     // Create two todos
     const todo1 = await request(app)
       .post('/todos')
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({ title: 'Keep This' })
       .expect(201);
 
     const todo2 = await request(app)
       .post('/todos')
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({ title: 'Delete This' })
       .expect(201);
 
     // Delete the second todo
     await request(app)
       .delete(`/todos/${todo2.body.id}`)
+      .set('Authorization', `Bearer ${API_KEY}`)
       .expect(204);
 
     // Verify persistence by querying repository
@@ -108,6 +121,7 @@ describe('TODO Persistence', () => {
     // Create first todo
     const todo1 = await request(app)
       .post('/todos')
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({ title: 'Todo 1' })
       .expect(201);
 
@@ -116,17 +130,19 @@ describe('TODO Persistence', () => {
     // Create second todo
     const todo2 = await request(app)
       .post('/todos')
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({ title: 'Todo 2' })
       .expect(201);
 
     expect(todo2.body.id).toBe('todo-2');
 
     // Delete first todo
-    await request(app).delete(`/todos/${todo1.body.id}`).expect(204);
+    await request(app).delete(`/todos/${todo1.body.id}`).set('Authorization', `Bearer ${API_KEY}`).expect(204);
 
     // Create third todo - should get next ID, not reuse deleted one
     const todo3 = await request(app)
       .post('/todos')
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({ title: 'Todo 3' })
       .expect(201);
 
@@ -142,6 +158,7 @@ describe('TODO Persistence', () => {
     // Create todo without description
     const response = await request(app)
       .post('/todos')
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({ title: 'No Description' })
       .expect(201);
 
@@ -153,6 +170,7 @@ describe('TODO Persistence', () => {
     // Update to add description
     await request(app)
       .put(`/todos/${response.body.id}`)
+      .set('Authorization', `Bearer ${API_KEY}`)
       .send({ description: 'Added Description' })
       .expect(200);
 
