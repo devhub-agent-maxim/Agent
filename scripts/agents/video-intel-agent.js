@@ -46,6 +46,7 @@ const SUPPORTED_PATTERNS = [
   /tiktok\.com\/@?[\w.]+\/video\/\d+/i,
   /tiktok\.com\/t\/\w+/i,
   /vm\.tiktok\.com\/\w+/i,
+  /vt\.tiktok\.com\/\w+/i,          // short share links (e.g. vt.tiktok.com/ZSHJmao5G)
   /instagram\.com\/(p|reel|reels)\/[\w-]+/i,
   /youtube\.com\/shorts\/[\w-]+/i,
   /youtu\.be\/[\w-]+/i,
