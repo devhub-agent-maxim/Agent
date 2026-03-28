@@ -392,6 +392,111 @@ const dbLogger = createLogger('Database');
 dbLogger.debug('Query executed', { query: 'SELECT * FROM todos' });
 ```
 
+## Graceful Shutdown
+
+The application implements graceful shutdown handling to ensure clean termination of resources when the process receives shutdown signals.
+
+### Shutdown Signals
+
+The server listens for standard termination signals:
+
+- **SIGTERM** - Standard termination signal (e.g., from Docker, Kubernetes, systemd)
+- **SIGINT** - Interrupt signal (e.g., Ctrl+C in terminal)
+
+### Shutdown Process
+
+When a shutdown signal is received, the application performs these steps in order:
+
+1. **Log the signal** - Records which signal triggered the shutdown
+2. **Start timeout timer** - Sets a 10-second timeout to prevent hanging
+3. **Stop accepting new requests** - Closes the HTTP server gracefully
+4. **Wait for active requests** - Allows in-flight requests to complete
+5. **Close database connection** - Cleanly closes the SQLite connection
+6. **Log completion** - Records successful shutdown
+7. **Exit process** - Terminates with appropriate exit code
+
+### Shutdown Timeout
+
+A **10-second timeout** is enforced to prevent the shutdown process from hanging indefinitely. If the shutdown doesn't complete within this window:
+
+- The timeout handler logs an error
+- The process is forcefully terminated with exit code 1
+- This prevents resource leaks in containerized environments
+
+### Shutdown Logging
+
+All shutdown events are logged with Winston for observability:
+
+```json
+{
+  "level": "info",
+  "message": "SIGTERM received, starting graceful shutdown..."
+}
+```
+
+```json
+{
+  "level": "info",
+  "message": "Database connection closed"
+}
+```
+
+```json
+{
+  "level": "info",
+  "message": "Graceful shutdown complete"
+}
+```
+
+### Exit Codes
+
+| Exit Code | Meaning |
+|-----------|---------|
+| `0` | Clean shutdown - all resources closed successfully |
+| `1` | Error during shutdown - server close failed, database close failed, or timeout exceeded |
+
+### Production Deployment
+
+**Container Orchestration (Docker/Kubernetes):**
+```yaml
+# Example Kubernetes deployment
+spec:
+  containers:
+  - name: agent-tools
+    terminationGracePeriodSeconds: 15  # Allow more than 10s timeout
+```
+
+**Process Managers (PM2, systemd):**
+```bash
+# PM2 will send SIGINT on stop
+pm2 start dist/index.js --name agent-tools
+
+# systemd sends SIGTERM by default
+systemctl stop agent-tools
+```
+
+### Testing Shutdown
+
+**Manual Testing:**
+```bash
+# Start the server
+npm start
+
+# In another terminal, send SIGTERM
+kill -SIGTERM $(pgrep -f "node.*index.js")
+
+# Or use Ctrl+C to send SIGINT
+```
+
+**Automated Tests:**
+
+The application includes comprehensive shutdown tests in `tests/shutdown.test.ts` that verify:
+- Signal handling and logging
+- Database connection closure
+- Timeout enforcement (10 seconds)
+- Error handling during shutdown
+- Exit code correctness
+
 ## Database
 
 The application uses SQLite for persistence. The database file is stored at `data/agent-tools.db` and is automatically created on first run.
