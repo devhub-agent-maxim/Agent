@@ -25,6 +25,13 @@ const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes
 const DEFAULT_CWD        = path.resolve(__dirname, '..', '..');
 const DEFAULT_CMD        = 'C:\\Users\\maxim\\AppData\\Roaming\\npm\\claude.cmd';
 
+// Model tiers
+const MODELS = {
+  sonnet: 'claude-sonnet-4-5',   // default — fast, cheap, capable
+  opus:   'claude-opus-4-6',     // complex reasoning and architecture decisions only
+  haiku:  'claude-haiku-4-5-20251001', // routing and trivial transforms
+};
+
 /**
  * Try to parse the last non-empty line of `text` as JSON.
  * Returns the parsed object, or null if it is not valid JSON.
@@ -52,12 +59,19 @@ function extractStructured(text) {
  * @param {number} [opts.timeoutMs]  - Max ms to wait (default 600 000).
  * @param {string} [opts.cwd]        - Working directory for Claude (default project root).
  * @param {string} [opts.claudeCmd]  - Path to the claude executable.
+ * @param {string} [opts.model]      - Model to use: 'sonnet' | 'opus' | 'haiku' | full model name.
+ *                                     Default: 'sonnet' (fast + cost-effective for most tasks).
+ *                                     Use 'opus' only for complex reasoning and architecture decisions.
  * @returns {Promise<{ success: boolean, output: string, structured: object|null }>}
  */
 function runClaude(prompt, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const cwd       = opts.cwd       ?? DEFAULT_CWD;
   const claudeCmd = opts.claudeCmd ?? DEFAULT_CMD;
+
+  // Resolve model: accept shorthand ('sonnet', 'opus', 'haiku') or full name
+  const modelKey   = opts.model ?? 'sonnet';
+  const modelName  = MODELS[modelKey] ?? modelKey; // fallback: treat as full model name
 
   return new Promise((resolve) => {
     let stdout   = '';
@@ -66,7 +80,7 @@ function runClaude(prompt, opts = {}) {
 
     const child = spawn(
       claudeCmd,
-      ['--print', '--dangerously-skip-permissions', '--no-session-persistence'],
+      ['--print', '--dangerously-skip-permissions', '--no-session-persistence', '--model', modelName],
       {
         cwd,
         env:         { ...process.env },
