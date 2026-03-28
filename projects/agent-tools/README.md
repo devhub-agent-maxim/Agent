@@ -6,12 +6,14 @@ A TypeScript + Express REST API for productivity tools with SQLite persistence a
 
 - ✅ CRUD operations for TODO items
 - ✅ SQLite database persistence with better-sqlite3
+- ✅ Comprehensive input validation with Joi
 - ✅ Bearer token authentication
 - ✅ Rate limiting (100 requests per 15 minutes per IP)
 - ✅ Structured logging with Winston
 - ✅ Request tracking with unique request IDs
+- ✅ Centralized error handling
 - ✅ OpenAPI/Swagger documentation
-- ✅ Comprehensive test coverage (75+ tests)
+- ✅ Comprehensive test coverage (105+ tests)
 - ✅ TypeScript with strict type checking
 
 ## Getting Started
@@ -90,6 +92,42 @@ Response:
 ### TODO Operations
 
 **Protected endpoints** - Require Bearer token authentication
+
+#### Input Validation Rules
+
+All TODO endpoints use Joi validation with strict type checking:
+
+**Title** (required for creation, optional for updates):
+- Type: `string`
+- Minimum length: 1 character (after trimming)
+- Maximum length: 200 characters
+- Whitespace is automatically trimmed
+- Error messages:
+  - Missing: "Title is required"
+  - Empty string: "Title cannot be empty"
+  - Too long: "Title cannot exceed 200 characters"
+  - Wrong type: "Title must be a string"
+
+**Description** (optional):
+- Type: `string`
+- Maximum length: 1000 characters
+- Whitespace is automatically trimmed
+- Empty strings are allowed
+- Error messages:
+  - Too long: "Description cannot exceed 1000 characters"
+  - Wrong type: "Description must be a string"
+
+**Completed** (optional):
+- Type: `boolean` (strict - no type coercion)
+- Must be `true` or `false`, not "true" or 1/0
+- Error message:
+  - Wrong type: "Completed must be a boolean"
+
+**Update validation**:
+- At least one field must be provided when updating
+- Error message: "At least one field must be provided for update"
+
+**Unknown fields** are silently stripped from requests.
 
 #### Create a TODO
 

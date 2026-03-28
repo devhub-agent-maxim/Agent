@@ -67,7 +67,7 @@ describe('TODO API', () => {
         .send({ description: 'No title' })
         .expect(400);
 
-      expect(response.body.error).toBe('Title is required and must be a string');
+      expect(response.body.error).toBe('Title is required');
     });
 
     it('should reject request with empty title', async () => {
@@ -87,7 +87,7 @@ describe('TODO API', () => {
         .send({ title: 123 })
         .expect(400);
 
-      expect(response.body.error).toBe('Title is required and must be a string');
+      expect(response.body.error).toBe('Title must be a string');
     });
 
     it('should reject title exceeding 200 characters', async () => {
