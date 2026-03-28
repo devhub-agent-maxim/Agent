@@ -17,6 +17,8 @@ Or add directly to the Pending section below.
 ## 📋 Pending
 <!-- Add new tasks here — agent picks from top to bottom -->
 
+- [ ] **BLOCKED**: Update GitHub PAT with 'workflow' scope — Current token lacks 'workflow' scope, preventing push of `.github/workflows/agent-tools-test.yml`. Maxim needs to regenerate token at https://github.com/settings/tokens with additional 'workflow' scope checked, then update in local git credentials.
+
 
 ---
 
