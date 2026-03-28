@@ -608,21 +608,25 @@ async function dispatchCommand(chatId, thread, text, msgId) {
 
 async function workLoop() {
   const active = workers.listActive();
+  // Only log to console for debugging, not to daily note
   log(`[Work] Tick — ${active.length} workers active`);
-  memory.log(`Work loop tick — ${active.length} workers running`);
 
   const decision = await decide(active);
-  log(`[Work] Decision: ${decision.action} — ${decision.reason}`);
 
+  // Silent wait — don't pollute the daily note with "waiting" entries
   if (decision.action === 'wait') {
-    memory.log(`Work loop: waiting — ${decision.reason}`);
+    log(`[Work] Decision: wait — ${decision.reason}`);
     return;
   }
 
   if (!decision.prompt) {
     log('[Work] Decision was "work" but no prompt — skipping');
+    memory.log('Work loop: decision was "work" but no prompt provided');
     return;
   }
+
+  // Only log to daily note when actually spawning work
+  log(`[Work] Decision: work — ${decision.reason}`);
 
   // Determine worker ID
   const workerId = decision.taskId || `AUTO-${Date.now()}`;
