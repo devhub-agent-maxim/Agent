@@ -1,5 +1,7 @@
 # Agent Tools API
 
+[![Agent Tools CI](https://github.com/devhub-agent-maxim/Agent/actions/workflows/agent-tools-test.yml/badge.svg)](https://github.com/devhub-agent-maxim/Agent/actions/workflows/agent-tools-test.yml)
+
 A TypeScript + Express REST API for productivity tools with SQLite persistence and API key authentication.
 
 ## Features
