@@ -45,10 +45,11 @@ const {
   markCompleted,
   markBlocked,
 } = require('./lib/task-queue');
-const { runClaude } = require('./lib/claude-runner');
-const socialMonitor = require('./agents/social-monitor-agent');
-const dashboard     = require('./lib/dashboard');
+const { runClaude }  = require('./lib/claude-runner');
+const socialMonitor  = require('./agents/social-monitor-agent');
+const dashboard      = require('./lib/dashboard');
 const { processVideo, extractVideoUrl } = require('./agents/video-intel-agent');
+const changeValidator = require('./agents/change-validator');
 
 const { spawn, execSync } = require('child_process');
 const path = require('path');
@@ -306,12 +307,12 @@ function buildChatPrompt(chatId, threadId, userText) {
 
 // ── Worker event handlers ─────────────────────────────────────────────────────
 
-workers.onComplete((workerId, output, structured) => {
+workers.onComplete(async (workerId, output, structured) => {
   log(`✅ Worker done: ${workerId}`);
 
-  const summary = structured?.summary || output.slice(0, 500);
+  const summary   = structured?.summary || output.slice(0, 500);
   const isBlocked = structured?.status === 'blocked';
-  const emoji   = isBlocked ? '🚫' : '✅';
+  const emoji     = isBlocked ? '🚫' : '✅';
 
   // Update TASKS.md if this was a queued task
   if (workerId.match(/^TASK-\d+$/)) {
@@ -326,11 +327,21 @@ workers.onComplete((workerId, output, structured) => {
     }
   }
 
-  // Notify Maxim
+  // Brief initial notify so Maxim knows it finished
   const nextAction = structured?.nextAction
     ? `\n\n*Next action needed:* ${structured.nextAction}`
     : '';
   notify(`${emoji} *${workerId} complete*\n${summary}${nextAction}`);
+
+  // Run change validator: checks diff, auto-commits, updates Jira, sends report
+  if (!isBlocked) {
+    try {
+      await changeValidator.validate(workerId, output, { notifyMain: notify });
+    } catch (err) {
+      log(`[Validator] Error: ${err.message}`);
+      memory.log(`Validator error for ${workerId}: ${err.message}`);
+    }
+  }
 });
 
 workers.onError((workerId, errorMsg) => {
