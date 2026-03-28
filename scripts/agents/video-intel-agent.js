@@ -79,7 +79,7 @@ function getCaptionsViaYtDlp(url, outputDir) {
   try {
     // Try to get auto-generated subtitles (fastest path, no video download)
     execSync(
-      `"${ytDlp}" --skip-download --write-auto-subs --sub-format vtt --sub-langs en --no-playlist -o "${outTemplate}" "${url}"`,
+      `"${ytDlp}" --impersonate chrome --skip-download --write-auto-subs --sub-format vtt --sub-langs en --no-playlist -o "${outTemplate}" "${url}"`,
       { timeout: 30000, stdio: 'pipe', encoding: 'utf8' }
     );
 
@@ -129,7 +129,7 @@ function getTranscriptViaAudio(url, outputDir) {
 
   log('Downloading audio...');
   execSync(
-    `"${ytDlp}" --extract-audio --audio-format mp3 --audio-quality 5 --no-playlist -o "${audioFile}" "${url}"`,
+    `"${ytDlp}" --impersonate chrome --extract-audio --audio-format mp3 --audio-quality 5 --no-playlist --no-check-formats -o "${audioFile}" "${url}"`,
     { timeout: 60000, stdio: 'pipe', encoding: 'utf8' }
   );
 
