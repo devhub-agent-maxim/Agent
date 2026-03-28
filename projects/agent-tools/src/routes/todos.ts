@@ -2,11 +2,15 @@ import { Router, Request, Response } from 'express';
 import { CreateTodoInput, UpdateTodoInput } from '../models/todo';
 import { todoRepository } from '../db/todos-repository';
 import { authenticateApiKey } from '../middleware/auth';
+import { todoRateLimiter } from '../middleware/rate-limiter';
 
 const router = Router();
 
 // Apply authentication to all routes
 router.use(authenticateApiKey);
+
+// Apply rate limiting to all routes
+router.use(todoRateLimiter);
 
 // Validation helpers
 const validateCreateInput = (body: any): { valid: boolean; error?: string } => {

@@ -7,8 +7,9 @@ A TypeScript + Express REST API for productivity tools with SQLite persistence a
 - ✅ CRUD operations for TODO items
 - ✅ SQLite database persistence with better-sqlite3
 - ✅ Bearer token authentication
+- ✅ Rate limiting (100 requests per 15 minutes per IP)
 - ✅ OpenAPI/Swagger documentation
-- ✅ Comprehensive test coverage (45 tests)
+- ✅ Comprehensive test coverage (48 tests)
 - ✅ TypeScript with strict type checking
 
 ## Getting Started
@@ -132,7 +133,9 @@ DELETE /todos/:id
 Authorization: Bearer your-api-key-here
 ```
 
-## Authentication
+## Security
+
+### Authentication
 
 All `/todos/*` endpoints require Bearer token authentication.
 
@@ -145,6 +148,33 @@ Authorization: Bearer your-api-key-here
 - `401 Unauthorized` - Missing or malformed authorization header
 - `403 Forbidden` - Invalid API key
 - `500 Internal Server Error` - API_KEYS not configured
+
+### Rate Limiting
+
+All `/todos/*` endpoints are protected by rate limiting to prevent abuse and ensure fair usage.
+
+**Default Limits:**
+- **100 requests per 15 minutes** per IP address
+- Rate limit information is included in response headers:
+  - `RateLimit-Limit`: Maximum requests allowed in the window
+  - `RateLimit-Remaining`: Number of requests remaining
+  - `RateLimit-Reset`: Timestamp when the rate limit resets
+
+**Rate Limit Exceeded Response:**
+```json
+{
+  "error": "Too many requests from this IP, please try again later.",
+  "retryAfter": "15 minutes"
+}
+```
+
+**Status Code:** `429 Too Many Requests`
+
+**Best Practices:**
+- Monitor the `RateLimit-Remaining` header to track your usage
+- Implement exponential backoff when receiving 429 responses
+- Cache responses when possible to reduce API calls
+- Distribute requests evenly throughout the time window
 
 ## Database
 
