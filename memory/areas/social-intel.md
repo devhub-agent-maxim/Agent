@@ -1,6 +1,26 @@
 <!-- last_seen: {"reddit_ClaudeAI":"1774690067","reddit_AutonomousAgents":"1774602952","reddit_LocalLLaMA":"1774691523","reddit_MachineLearning":"1774672650","yt_raycfu":"2026-03-27T16:51:15.000Z","yt_nateliason":"2026-03-21T09:57:10.116Z","gh_claude-flow":"2026-03-26T00:33:54.000Z","gh_claude-code":"2026-03-27T21:42:09.000Z","hn_front":"2026-03-28T08:06:19.000Z"} -->
 # Social Intelligence Feed
 
+## 2026-03-28 — TikTok Video
+- **[TikTok]** [Use hooks as pre-execution safety rails to block destructive operations (force p…](https://vt.tiktok.com/ZSHJuqfjC)
+  - Use hooks as pre-execution safety rails to block destructive operations (force push, accidental publishes, dangerous DB commands) before they run
+  - Implement modular rules that auto-load context-specific prompts (database/frontend/security) instead of one massive system prompt
+  - Deploy specialist agent reviewers for distinct concerns: bugs (race conditions, nulls), security vulnerabilities, performance (N+1 queries), documentation accuracy, UI quality
+  - Build skills as slash commands that orchestrate complete workflows end-to-end (/ship for commit→PR, /debug-fix for reproduce→fix→test, /TDD for red-green-refactor)
+  - Maintain CLAUDE.md as central project brain containing architecture decisions, rules, and context
+  - Consider isolated branch environments (Dev Swarm pattern) for parallel feature development without conflicts
+  > _This is a mature, production-ready implementation blueprint directly applicable to autonomous agent workflows—the modular rules system, hooks-as-safety-rails, specialist agent architecture, and skills-as-workflows patterns solve core orchestration and safety challenges._
+
+## 2026-03-28 — TikTok Video
+- **[TikTok]** [Hooks enforce hard safety rails that prevent destructive operations (force push,…](https://vt.tiktok.com/ZSHJuqfjC)
+  - Hooks enforce hard safety rails that prevent destructive operations (force push, accidental publishes, destructive DB commands) before execution
+  - Modular rules system loads context-specific prompts automatically based on what code you're touching (database/frontend/security) rather than dumping one massive prompt
+  - Specialist reviewer agents handle specific domains: bugs (race conditions), security (actual exploits), performance (N+1 queries), documentation accuracy, and UI decisions
+  - Workflow skills automate complete chains: `/ship` (staged→merged PR), `/debug-fix` (reproduce→fix→test), `/tdd` (red-green-refactor), `/pr-review` (all agents→merge decision)
+  - CLAUDE.md serves as project brain storing architecture decisions and rules; settings.json wires everything together
+  - DevSwarm enables parallel isolated branch development for building multiple features simultaneously without conflicts
+  > _This directly maps to your current .claude folder structure and shows proven patterns for hooks, modular agent coordination, workflow automation skills, and safety rails that you can implement or refine in your autonomous agent setup._
+
 ## 2026-03-28
 - **[YouTube/raycfu]** [3 Essential Openclaw skills](https://www.youtube.com/shorts/1EClwFpawzA)
 - **[YouTube/raycfu]** [Do not download openclaw skills](https://www.youtube.com/shorts/Gwf7jn_2J8U)

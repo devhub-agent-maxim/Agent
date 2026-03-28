@@ -20,51 +20,11 @@
 
 const { spawn } = require('child_process');
 const path      = require('path');
+const { config } = require('./config');
 
 const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes
 const DEFAULT_CWD        = path.resolve(__dirname, '..', '..');
-
-// ── Auto-detect Claude CLI path ───────────────────────────────────────────────
-// Claude Code ships as a VS Code extension — not a global npm package.
-// Search known install locations in preference order.
-function findClaudeCli() {
-  const os   = require('os');
-  const home  = os.homedir();
-  const { execSync } = require('child_process');
-
-  const candidates = [
-    // Env override — set CLAUDE_CMD in .env to force a specific path
-    process.env.CLAUDE_CMD,
-    // VS Code extension installs (check all versions, pick latest-looking one)
-    ...(() => {
-      try {
-        const extDir = path.join(home, '.vscode', 'extensions');
-        const fs = require('fs');
-        if (!fs.existsSync(extDir)) return [];
-        return fs.readdirSync(extDir)
-          .filter(d => d.startsWith('anthropic.claude-code-'))
-          .sort()
-          .reverse()  // newest version first
-          .map(d => path.join(extDir, d, 'resources', 'native-binary', 'claude.exe'));
-      } catch { return []; }
-    })(),
-    // Claude desktop app install
-    path.join(home, 'AppData', 'Roaming', 'Claude', 'claude-code', '2.1.78', 'claude.exe'),
-    // Fallback: hope it's on PATH
-    'claude',
-    'claude.cmd',
-  ].filter(Boolean);
-
-  for (const cmd of candidates) {
-    try {
-      execSync(`"${cmd}" --version`, { stdio: 'pipe', timeout: 5000 });
-      return cmd;
-    } catch {}
-  }
-  return candidates[0] || 'claude'; // last resort
-}
-
-const DEFAULT_CMD = findClaudeCli();
+const DEFAULT_CMD        = config.claude.cmd;
 
 // Model tiers
 const MODELS = {
