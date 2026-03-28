@@ -139,6 +139,51 @@ curl http://localhost:3001/api/goals
 curl http://localhost:3001/api/goals | jq '.summary'
 ```
 
+### GET /api/tasks
+
+Returns parsed tasks from memory/TASKS.md with summary counts.
+
+**Response:**
+```json
+{
+  "tasks": {
+    "inProgress": [
+      "- [ ] Building feature X",
+      "- [ ] Refactoring module Y"
+    ],
+    "pending": [
+      "- [ ] Add tests for Z",
+      "- [ ] **BLOCKED**: Update GitHub PAT with 'workflow' scope"
+    ],
+    "completed": [
+      "- [x] TASK-004 | Test worker spawning *(done: 28/03/2026, 7:40 pm)*",
+      "- [x] TASK-003 | Scan memory/projects/delivery-logistics/ *(done: 27/03/2026)*"
+    ]
+  },
+  "summary": {
+    "inProgress": 2,
+    "pending": 2,
+    "completed": 2
+  },
+  "timestamp": "2026-03-29T04:07:00.000Z"
+}
+```
+
+**Examples:**
+```bash
+# Get all tasks with counts
+curl http://localhost:3001/api/tasks
+
+# Parse response with jq
+curl http://localhost:3001/api/tasks | jq '.summary'
+
+# Get pending tasks only
+curl http://localhost:3001/api/tasks | jq '.tasks.pending'
+
+# Count completed tasks
+curl http://localhost:3001/api/tasks | jq '.summary.completed'
+```
+
 ### GET /api/recent-activity
 
 Returns recent activity log entries from today's daily note (similar to /api/logs but with 'activity' key for consistency).

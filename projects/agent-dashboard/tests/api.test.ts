@@ -142,6 +142,47 @@ describe('Agent Dashboard API', () => {
     });
   });
 
+  describe('GET /api/tasks', () => {
+    it('should return tasks object with metadata', async () => {
+      const response = await request(app).get('/api/tasks');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('tasks');
+      expect(response.body).toHaveProperty('summary');
+      expect(response.body).toHaveProperty('timestamp');
+    });
+
+    it('should return tasks with inProgress, pending, and completed arrays', async () => {
+      const response = await request(app).get('/api/tasks');
+
+      expect(response.body.tasks).toHaveProperty('inProgress');
+      expect(response.body.tasks).toHaveProperty('pending');
+      expect(response.body.tasks).toHaveProperty('completed');
+      expect(Array.isArray(response.body.tasks.inProgress)).toBe(true);
+      expect(Array.isArray(response.body.tasks.pending)).toBe(true);
+      expect(Array.isArray(response.body.tasks.completed)).toBe(true);
+    });
+
+    it('should return summary with counts', async () => {
+      const response = await request(app).get('/api/tasks');
+
+      expect(response.body.summary).toHaveProperty('inProgress');
+      expect(response.body.summary).toHaveProperty('pending');
+      expect(response.body.summary).toHaveProperty('completed');
+      expect(typeof response.body.summary.inProgress).toBe('number');
+      expect(typeof response.body.summary.pending).toBe('number');
+      expect(typeof response.body.summary.completed).toBe('number');
+    });
+
+    it('should return valid ISO timestamp', async () => {
+      const response = await request(app).get('/api/tasks');
+
+      expect(response.body.timestamp).toBeDefined();
+      const timestamp = new Date(response.body.timestamp);
+      expect(timestamp.toString()).not.toBe('Invalid Date');
+    });
+  });
+
   describe('GET /api/recent-activity', () => {
     it('should return activity array with metadata', async () => {
       const response = await request(app).get('/api/recent-activity');

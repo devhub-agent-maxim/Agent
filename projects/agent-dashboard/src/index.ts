@@ -102,6 +102,36 @@ function getDecisionEngineStatus(): { available: boolean; message: string } {
   }
 }
 
+// Helper: Read tasks from memory/TASKS.md
+function readTasks(): { inProgress: string[]; pending: string[]; completed: string[] } {
+  try {
+    const tasksPath = path.join(ROOT, 'memory', 'TASKS.md');
+    const content = fs.readFileSync(tasksPath, 'utf8');
+
+    const inProgress: string[] = [];
+    const pending: string[] = [];
+    const completed: string[] = [];
+
+    let section: 'none' | 'inProgress' | 'pending' | 'completed' = 'none';
+
+    for (const line of content.split('\n')) {
+      if (line.includes('## 🔄 In Progress')) section = 'inProgress';
+      else if (line.includes('## 📋 Pending')) section = 'pending';
+      else if (line.includes('## ✅ Completed')) section = 'completed';
+      else if (line.trim().startsWith('-')) {
+        const task = line.trim();
+        if (section === 'inProgress') inProgress.push(task);
+        else if (section === 'pending') pending.push(task);
+        else if (section === 'completed') completed.push(task);
+      }
+    }
+
+    return { inProgress, pending, completed };
+  } catch (err) {
+    return { inProgress: [], pending: [], completed: [] };
+  }
+}
+
 // API endpoints
 app.get('/api/status', (req: Request, res: Response) => {
   const status = {
@@ -136,6 +166,20 @@ app.get('/api/goals', (req: Request, res: Response) => {
       active: goals.active.length,
       waiting: goals.waiting.length,
       completed: goals.completed.length,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/tasks', (req: Request, res: Response) => {
+  const tasks = readTasks();
+
+  res.json({
+    tasks,
+    summary: {
+      inProgress: tasks.inProgress.length,
+      pending: tasks.pending.length,
+      completed: tasks.completed.length,
     },
     timestamp: new Date().toISOString(),
   });
