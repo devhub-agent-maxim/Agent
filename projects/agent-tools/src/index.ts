@@ -3,6 +3,7 @@ import swaggerUi from 'swagger-ui-express';
 import todosRouter from './routes/todos';
 import { swaggerSpec } from './swagger';
 import { initializeDatabase } from './db/database';
+import { errorHandler } from './middleware/error-handler';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,6 +25,9 @@ app.get('/health', (req: Request, res: Response) => {
 
 // Mount TODO routes
 app.use('/todos', todosRouter);
+
+// Error handler must be registered last
+app.use(errorHandler);
 
 if (require.main === module) {
   app.listen(PORT, () => {
