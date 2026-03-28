@@ -371,17 +371,19 @@ async function filterForRelevance(rawItems) {
 
   const prompt = `You are an intelligence filter for a developer building autonomous AI agent systems using Claude Code (OpenClaw-style: persistent agents, Telegram control, worker delegation).
 
-Rate each item 1-10 for usefulness to someone building autonomous Claude Code agents:
-- 9-10: Direct technique, new tool, or pattern for autonomous agents / OpenClaw setup
-- 7-8: Related to LLM automation, agent frameworks, Claude/Anthropic tooling
-- 5-6: General AI/tech, interesting but not directly actionable
-- 1-4: Unrelated, noise
+Rate each item 1-10 for usefulness to someone building autonomous Claude Code agents. Be STRICT — most items should score 1-4.
+
+SCORING RULES (follow exactly):
+- 9-10: Direct implementation technique, new tool, or specific pattern for autonomous agents/OpenClaw/Claude Code workflows — immediately actionable
+- 7-8: Related to LLM agent automation, frameworks (langchain/crew), Claude/Anthropic tooling, or agent coordination patterns — useful context
+- 5-6: General AI/ML news, interesting but NOT directly applicable to building agents
+- 1-4: Unrelated to autonomous agents, generic tech news, announcements without substance, noise
 
 Items:
 ${itemList}
 
-Respond ONLY with a JSON array (no other text):
-[{"index":1,"score":8,"reason":"One sentence why"},{"index":2,"score":3,"reason":"why not"}]`;
+Respond ONLY with a JSON array (no other text). Every item must be scored:
+[{"index":1,"score":8,"reason":"One sentence explaining why this is useful"},{"index":2,"score":3,"reason":"One sentence why not"}]`;
 
   const result = await runClaude(prompt, { timeoutMs: 120000, model: 'sonnet' });
 
@@ -391,15 +393,16 @@ Respond ONLY with a JSON array (no other text):
     if (jsonMatch) {
       scores = JSON.parse(jsonMatch[0]);
     } else {
-      // Claude failed or returned no JSON — pass everything through
-      log(`Filter: Claude returned no JSON (${result.output.slice(0,80)}) — passing all items`);
-      return rawItems.map(item => ({ ...item, relevanceScore: 7, relevanceReason: 'Filter unavailable' }));
+      // Claude failed or returned no JSON — return empty (strict mode)
+      log(`Filter: Claude returned no JSON (${result.output.slice(0,80)}) — returning empty`);
+      return [];
     }
   } catch (e) {
-    log(`Filter parse error: ${e.message} — passing all items`);
-    return rawItems.map(item => ({ ...item, relevanceScore: 7, relevanceReason: 'Filter unavailable' }));
+    log(`Filter parse error: ${e.message} — returning empty`);
+    return [];
   }
 
+  // Only include items with score >= 7, sorted by score descending, capped at 10
   const filtered = [];
   for (const s of scores) {
     if (s.score >= 7) {
@@ -408,18 +411,12 @@ Respond ONLY with a JSON array (no other text):
     }
   }
 
-  // Safety net: if filter returned nothing but we had items, lower threshold to 5
-  if (filtered.length === 0 && scores.length > 0) {
-    const best = scores.filter(s => s.score >= 5).slice(0, 5);
-    for (const s of best) {
-      const item = rawItems[s.index - 1];
-      if (item) filtered.push({ ...item, relevanceScore: s.score, relevanceReason: s.reason });
-    }
-    if (filtered.length > 0) log(`Filter: fell back to score ≥5, got ${filtered.length} items`);
-  }
+  // Sort by score (highest first) and cap at 10 items
+  filtered.sort((a, b) => b.relevanceScore - a.relevanceScore);
+  const capped = filtered.slice(0, 10);
 
-  log(`Filter: ${filtered.length}/${rawItems.length} passed`);
-  return filtered;
+  log(`Filter: ${capped.length}/${rawItems.length} passed (score ≥7, top 10)`);
+  return capped;
 }
 
 // ── Build Telegram digest ─────────────────────────────────────────────────────

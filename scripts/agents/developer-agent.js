@@ -12,7 +12,8 @@ const path = require('path');
 const fs = require('fs');
 
 const PROJECT_ROOT  = path.resolve(__dirname, '..', '..');
-const CLAUDE_CMD    = 'C:\\Users\\maxim\\AppData\\Roaming\\npm\\claude.cmd';
+const { config }    = require('../lib/config');
+const CLAUDE_CMD    = config.claude.cmd;
 const NOTIFY_SCRIPT = path.join(__dirname, '..', 'notify.js');
 const MAX_RETRIES   = 3;
 const CLAUDE_TIMEOUT_MS = 600000; // 10 min

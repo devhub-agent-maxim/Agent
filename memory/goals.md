@@ -7,20 +7,6 @@
 
 ## Active Goals
 
-### Goal 2: Intel Pipeline — Daily Digest Quality
-**Priority:** HIGH
-**Description:** Improve the morning intel scraper so it produces concise, high-signal digests.
-Each item should include: title, URL, score, and a 1-sentence reason why it matters.
-The digest should never send more than 10 items. Items with score <7 should be silently dropped.
-Verify the scraper actually finds fresh content (not same items repeatedly due to stale last_seen).
-**Next action:** Review scripts/agents/social-monitor-agent.js — check that last_seen timestamps are being saved and loaded correctly, and that the Sonnet filter prompt is tight enough to filter noise.
-**Done when:**
-- /monitor returns only ≥7 scored items with clear reasons
-- Items don't repeat across runs
-- Digest lands in Social Monitor thread (4) with proper formatting
-
----
-
 ### Goal 3: Agent Self-Improvement — Continuous Enhancement
 **Priority:** MEDIUM
 **Description:** Every work cycle, the agent should look at its own performance and find ONE small improvement to make.
@@ -35,19 +21,6 @@ Write improvements directly to code with proper tests.
 
 ---
 
-### Goal 4: Project Scaffolding — New Project Ready
-**Priority:** MEDIUM
-**Description:** Scaffold a real project in projects/ that the agent can actively develop.
-Use projects/_template/ as base. Create a TypeScript + Express API for a simple productivity tool.
-The project should have: src/, tests/, config/, package.json with proper deps, tsconfig.json, jest config.
-**Next action:** Copy projects/_template/ to projects/agent-tools/, install deps, write a basic health-check endpoint with test, verify npm test passes.
-**Done when:**
-- projects/agent-tools/ exists with full structure
-- npm install && npm test both pass
-- At least one endpoint implemented with passing test
-
----
-
 ## Waiting Goals
 *(Goals defined but not yet started)*
 
@@ -55,6 +28,31 @@ The project should have: src/, tests/, config/, package.json with proper deps, t
 
 ## Completed Goals
 *(Moved here when done — keeps a record)*
+
+### Goal 4: Project Scaffolding — New Project Ready ✅
+**Completed:** 2026-03-29 (12:52 AM)
+**Priority:** MEDIUM
+**Description:** Scaffold a real project in projects/ that the agent can actively develop.
+Use projects/_template/ as base. Create a TypeScript + Express API for a simple productivity tool.
+The project should have: src/, tests/, config/, package.json with proper deps, tsconfig.json, jest config.
+**Done when:**
+- projects/agent-tools/ exists with full structure ✅
+- npm install && npm test both pass ✅
+- At least one endpoint implemented with passing test ✅
+**Final Status:** Scaffolded successfully — health endpoint with tests, 491 packages installed, build passing
+
+### Goal 2: Intel Pipeline — Daily Digest Quality ✅
+**Completed:** 2026-03-29 (12:58 AM)
+**Priority:** HIGH
+**Description:** Improve the morning intel scraper so it produces concise, high-signal digests.
+Each item should include: title, URL, score, and a 1-sentence reason why it matters.
+The digest should never send more than 10 items. Items with score <7 should be silently dropped.
+Verify the scraper actually finds fresh content (not same items repeatedly due to stale last_seen).
+**Done when:**
+- /monitor returns only ≥7 scored items with clear reasons ✅
+- Items don't repeat across runs ✅
+- Digest lands in Social Monitor thread (4) with proper formatting ✅
+**Final Status:** All verification checks passed — strict filtering (score ≥7), 10-item cap enforced, Telegram digest includes title+URL+score+reason, last_seen timestamps prevent duplicates
 
 ### Goal 1: Autonomous Agent Foundation — Online ✅
 **Completed:** 2026-03-28 (8:51 PM)

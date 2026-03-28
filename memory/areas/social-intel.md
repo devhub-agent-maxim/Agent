@@ -1,5 +1,28 @@
-<!-- last_seen: {"reddit_ClaudeAI":"1774690067","reddit_AutonomousAgents":"1774602952","reddit_LocalLLaMA":"1774691523","reddit_MachineLearning":"1774672650","yt_raycfu":"2026-03-27T16:51:15.000Z","yt_nateliason":"2026-03-21T09:57:10.116Z","gh_claude-flow":"2026-03-26T00:33:54.000Z","gh_claude-code":"2026-03-27T21:42:09.000Z","hn_front":"2026-03-28T08:06:19.000Z"} -->
+<!-- last_seen: {"reddit_ClaudeAI":"1774690067","reddit_AutonomousAgents":"1774602952","reddit_LocalLLaMA":"1774691523","reddit_MachineLearning":"1774672650","yt_raycfu":"2026-03-27T16:51:15.000Z","yt_nateliason":"2026-03-21T09:57:10.116Z","gh_claude-flow":"2026-03-26T00:33:54.000Z","gh_claude-code":"2026-03-27T21:42:09.000Z","hn_front":"2026-03-28T14:49:30.000Z"} -->
 # Social Intelligence Feed
+
+## 2026-03-28
+- **[HackerNews]** [We built a multi-agent research hub. The waitlist is a reverse-CAPTCHA](https://enlidea.com)
+
+## 2026-03-28 — TikTok Video
+- **[TikTok]** [Pre-execution hooks block destructive operations (force push, accidental deploys…](https://vt.tiktok.com/ZSHJmao5G)
+  - Pre-execution hooks block destructive operations (force push, accidental deploys, DB commands) before they run — hard safety rails for autonomous agents
+  - Modular rules system loads context-specific prompts (database, frontend, security) instead of one giant prompt — Claude only sees relevant rules per task
+  - Specialist reviewer agents for focused analysis: bugs (race conditions), security (attacker mindset), performance (N+1), docs accuracy, UI quality
+  - Slash command workflows chain full automation: `/ship` (staged→PR), `/debug-fix` (reproduce→fix→test), `/pr-review` (all agents→decision)
+  - CLAUDE.md serves as project brain storing architecture/decisions/rules; entire setup auto-scaffolds via `/setup-dot-claude`
+  - Dev Swarm environment enables parallel isolated branch development for concurrent feature work without conflicts
+  > _This is a production-proven Claude Code architecture with modular safety rails, context-aware prompting, specialist agents, and workflow automation — directly maps to autonomous AI agent system design patterns._
+
+## 2026-03-28 — TikTok Video
+- **[TikTok]** [Use hooks as pre-execution safety rails to block destructive operations (force p…](https://vt.tiktok.com/ZSHJmao5G)
+  - Use hooks as pre-execution safety rails to block destructive operations (force push, accidental publishes, destructive DB commands) before they run
+  - Structure rules modularly so context-specific rules (database, frontend, security) load automatically based on what's being touched, not as one giant prompt
+  - Deploy specialist reviewer agents with focused domains (bugs/race conditions, security vulnerabilities, performance/N+1 queries, documentation accuracy, UI/UX validation)
+  - Build slash command skills that chain full workflows (/ship for staged→merged PR, /debug-fix for reproduce→fix→test, /TDD for red-green-refactor)
+  - Use CLAUDE.md as central project brain for architecture decisions and settings.json to wire hooks/agents/skills together
+  - Consider parallel development environments (like dev swarm) for concurrent feature work in isolated branches
+  > _The modular rules system, specialist agent orchestration, and workflow skills directly map to organizing .claude folders for autonomous agent coordination._
 
 ## 2026-03-28 — TikTok Video
 - **[TikTok]** [Use hooks as pre-execution safety rails to block destructive operations (force p…](https://vt.tiktok.com/ZSHJuqfjC)

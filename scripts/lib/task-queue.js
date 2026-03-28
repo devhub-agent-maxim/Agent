@@ -25,10 +25,10 @@ const EMPTY_QUEUE =
   '## \uD83D\uDCCB Pending\n\n' +
   '## \u2705 Completed\n';
 
-// Regex anchors for the three sections
-const SECTION_IN_PROGRESS = /## 🔄 In Progress\n/;
-const SECTION_PENDING      = /## 📋 Pending\n/;
-const SECTION_COMPLETED    = /## ✅ Completed\n/;
+// Regex anchors for the three sections (handle both \r\n and \n)
+const SECTION_IN_PROGRESS = /## 🔄 In Progress\r?\n/;
+const SECTION_PENDING      = /## 📋 Pending\r?\n/;
+const SECTION_COMPLETED    = /## ✅ Completed\r?\n/;
 
 const VALID_TAGS = ['dev', 'deploy', 'qa', 'monitor', 'jira', 'calendar'];
 

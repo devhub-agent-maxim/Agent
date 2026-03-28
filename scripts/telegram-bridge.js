@@ -21,13 +21,30 @@ console.log = log;
 console.error = log;
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const BOT_TOKEN       = '8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew';
-const GROUP_ID        = -1003615225859;
+// Load .env manually if needed
 const PROJECT_DIR     = path.resolve(__dirname, '..');
-const CLAUDE_CMD      = 'C:\\Users\\maxim\\AppData\\Roaming\\npm\\claude.cmd';
+const envPath = path.join(PROJECT_DIR, '.env');
+if (fs.existsSync(envPath) && !process.env.TELEGRAM_BOT_TOKEN) {
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  envContent.split('\n').forEach(line => {
+    const match = line.match(/^([^=]+)=(.*)$/);
+    if (match) process.env[match[1].trim()] = match[2].trim();
+  });
+}
+
+const BOT_TOKEN       = process.env.TELEGRAM_BOT_TOKEN;
+const GROUP_ID        = parseInt(process.env.TELEGRAM_GROUP_ID);
+const { config: _cfg } = require('./lib/config');
+const CLAUDE_CMD      = _cfg.claude.cmd;
 const API             = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const CLAUDE_TIMEOUT_MS = 300000; // 5 min
 const TASKS_FILE      = path.join(PROJECT_DIR, 'memory', 'TASKS.md');
+const GOALS_FILE      = path.join(PROJECT_DIR, 'memory', 'goals.md');
+
+if (!BOT_TOKEN || !GROUP_ID) {
+  console.error('❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_GROUP_ID in .env');
+  process.exit(1);
+}
 
 // ── Conversation memory (per thread, last 8 exchanges) ────────────────────────
 const convHistory = new Map();
@@ -174,6 +191,8 @@ async function handleMessage(msg) {
       '*Chat commands:*',
       '`/status`     — Bridge + Claude version',
       '`/tasks`      — Show task queue',
+      '`/goals`      — Show current goals',
+      '`/workers`    — Show worker status and activity',
       '`/clear`      — Clear conversation memory for this topic',
       '`/help`       — This message',
       '',
@@ -225,6 +244,86 @@ async function handleMessage(msg) {
       await sendMsg(chatId, lines.join('\n'), thread);
     } catch (e) {
       await sendMsg(chatId, `❌ Error reading tasks: ${e.message}`, thread);
+    }
+    processing.delete(msgId);
+    return;
+  }
+
+  // /goals — show current goals
+  if (text === '/goals') {
+    try {
+      const content = fs.existsSync(GOALS_FILE) ? fs.readFileSync(GOALS_FILE, 'utf8') : 'No goals file found.';
+      const activeSection = content.match(/## Active Goals\n([\s\S]*?)(?=\n## |$)/)?.[1] || '';
+
+      const lines = ['🎯 *Current Goals*', ''];
+
+      if (!activeSection.trim()) {
+        lines.push('_No active goals defined._');
+      } else {
+        // Parse goals from the active section
+        const goalBlocks = activeSection.split(/\n### /).filter(b => b.trim());
+
+        for (const block of goalBlocks) {
+          const titleMatch = block.match(/^(.+)/);
+          const priorityMatch = block.match(/\*\*Priority:\*\* (.+)/);
+          const statusMatch = block.match(/\*\*Status:\*\* (.+)/);
+          const descMatch = block.match(/\*\*Description:\*\* (.+)/);
+
+          if (titleMatch) {
+            lines.push(`*${titleMatch[1].trim()}*`);
+            if (priorityMatch) lines.push(`Priority: \`${priorityMatch[1].trim()}\``);
+            if (statusMatch) lines.push(`Status: ${statusMatch[1].trim()}`);
+            if (descMatch) lines.push(`${descMatch[1].trim()}`);
+            lines.push('');
+          }
+        }
+      }
+
+      await sendMsg(chatId, lines.join('\n'), thread);
+    } catch (e) {
+      await sendMsg(chatId, `❌ Error reading goals: ${e.message}`, thread);
+    }
+    processing.delete(msgId);
+    return;
+  }
+
+  // /workers — show worker status and recent activity
+  if (text === '/workers') {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const dailyFile = path.join(PROJECT_DIR, 'memory', 'daily', `${today}.md`);
+      const content = fs.existsSync(dailyFile) ? fs.readFileSync(dailyFile, 'utf8') : '';
+
+      const lines = ['⚙️ *Worker Status*', ''];
+
+      // Find most recent worker count
+      const workerCountMatches = [...content.matchAll(/Work loop tick — (\d+) workers running/g)];
+      const currentCount = workerCountMatches.length > 0
+        ? workerCountMatches[workerCountMatches.length - 1][1]
+        : '0';
+
+      lines.push(`*Currently Running:* ${currentCount} workers`);
+      lines.push('');
+
+      // Find recent worker activity (last 10 entries)
+      const workerLogs = [];
+      const spawnMatches = [...content.matchAll(/- (.+) — (?:Spawning|Worker spawned|Worker done): (.+)/g)];
+
+      if (spawnMatches.length > 0) {
+        lines.push('*Recent Activity:*');
+        const recentLogs = spawnMatches.slice(-10);
+        for (const match of recentLogs) {
+          const time = match[1];
+          const activity = match[2].slice(0, 100);
+          lines.push(`\`${time}\` — ${activity}${match[2].length > 100 ? '...' : ''}`);
+        }
+      } else {
+        lines.push('_No worker activity today._');
+      }
+
+      await sendMsg(chatId, lines.join('\n'), thread);
+    } catch (e) {
+      await sendMsg(chatId, `❌ Error reading worker status: ${e.message}`, thread);
     }
     processing.delete(msgId);
     return;
