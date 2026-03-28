@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
+import { getWeeklyMetrics, formatDuration } from './lib/analytics';
 
 const app = express();
 const PORT = 3001;
@@ -235,6 +236,30 @@ app.get('/api/schedules', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/metrics', (req: Request, res: Response) => {
+  const days = parseInt(req.query.days as string) || 7;
+  const metrics = getWeeklyMetrics(ROOT, days);
+
+  res.json({
+    metrics: {
+      days: metrics.days.map(day => ({
+        ...day,
+        avgTaskDurationFormatted: formatDuration(day.avgTaskDurationMs),
+      })),
+      summary: {
+        ...metrics.summary,
+        avgCompletionTimeFormatted: formatDuration(metrics.summary.avgCompletionTimeMs),
+      },
+    },
+    period: {
+      days,
+      start: metrics.days[0]?.date || null,
+      end: metrics.days[metrics.days.length - 1]?.date || null,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Web UI
 app.get('/', (req: Request, res: Response) => {
   res.send(`<!DOCTYPE html>
@@ -361,14 +386,63 @@ app.get('/', (req: Request, res: Response) => {
       border-radius: 3px;
       color: #58a6ff;
     }
+    .metric-card {
+      background: #0d1117;
+      padding: 16px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+      text-align: center;
+    }
+    .metric-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #58a6ff;
+      margin: 8px 0;
+    }
+    .metric-label {
+      font-size: 13px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-sublabel {
+      font-size: 12px;
+      color: #7d8590;
+      margin-top: 4px;
+    }
+    .success-rate-good { color: #3fb950; }
+    .success-rate-fair { color: #d29922; }
+    .success-rate-poor { color: #da3633; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>🤖 Agent Dashboard</h1>
 
-    <!-- Recent Activity Section -->
+    <!-- Metrics Summary Section -->
     <div class="card full-width">
+      <h2>📈 Weekly Metrics</h2>
+      <div class="grid">
+        <div class="metric-card">
+          <div class="metric-label">Tasks This Week</div>
+          <div class="metric-value" id="metric-tasks">-</div>
+          <div class="metric-sublabel" id="metric-tasks-avg">- per day</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Success Rate</div>
+          <div class="metric-value" id="metric-success">-</div>
+          <div class="metric-sublabel" id="metric-workers">- workers spawned</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Avg Completion Time</div>
+          <div class="metric-value" id="metric-time">-</div>
+          <div class="metric-sublabel" id="metric-commits">- commits</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Activity Section -->
+    <div class="card full-width" style="margin-top: 20px;">
       <h2>📊 Recent Activity <span class="section-count" id="activity-count">(0)</span></h2>
       <div id="recent-activity"></div>
     </div>
@@ -428,21 +502,46 @@ app.get('/', (req: Request, res: Response) => {
 
       try {
         // Fetch all endpoints in parallel
-        const [activityRes, workersRes, goalsRes, tasksRes, schedulesRes] = await Promise.all([
+        const [activityRes, workersRes, goalsRes, tasksRes, schedulesRes, metricsRes] = await Promise.all([
           fetch('/api/recent-activity?count=10'),
           fetch('/api/workers'),
           fetch('/api/goals'),
           fetch('/api/tasks'),
-          fetch('/api/schedules')
+          fetch('/api/schedules'),
+          fetch('/api/metrics?days=7')
         ]);
 
-        const [activity, workers, goals, tasks, schedules] = await Promise.all([
+        const [activity, workers, goals, tasks, schedules, metrics] = await Promise.all([
           activityRes.json(),
           workersRes.json(),
           goalsRes.json(),
           tasksRes.json(),
-          schedulesRes.json()
+          schedulesRes.json(),
+          metricsRes.json()
         ]);
+
+        // Metrics Summary
+        if (metrics.metrics) {
+          const summary = metrics.metrics.summary;
+          document.getElementById('metric-tasks').textContent = summary.totalTasks.toString();
+          document.getElementById('metric-tasks-avg').textContent = \`\${summary.avgTasksPerDay.toFixed(1)} per day\`;
+
+          const successRate = summary.successRate;
+          const successEl = document.getElementById('metric-success');
+          successEl.textContent = \`\${successRate.toFixed(1)}%\`;
+          // Color code success rate
+          if (successRate >= 90) {
+            successEl.className = 'metric-value success-rate-good';
+          } else if (successRate >= 70) {
+            successEl.className = 'metric-value success-rate-fair';
+          } else {
+            successEl.className = 'metric-value success-rate-poor';
+          }
+          document.getElementById('metric-workers').textContent = \`\${summary.totalWorkers} workers spawned\`;
+
+          document.getElementById('metric-time').textContent = summary.avgCompletionTimeFormatted;
+          document.getElementById('metric-commits').textContent = \`\${summary.commits} commits\`;
+        }
 
         // Recent Activity
         const activityDiv = document.getElementById('recent-activity');

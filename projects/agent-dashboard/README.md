@@ -4,6 +4,7 @@ Real-time observability dashboard for the autonomous agent system.
 
 ## Features
 
+- **Weekly Metrics**: Performance analytics with task completion, success rate, and timing data
 - **Active Goals**: Shows current goals from `memory/goals.md`
 - **Tasks**: Displays in-progress, pending, and completed tasks from `memory/TASKS.md`
 - **Active Workers**: Displays running Claude CLI workers with their tasks and runtime
@@ -302,6 +303,93 @@ curl http://localhost:3001/api/schedules | jq '.schedules[] | select(.enabled ==
 curl http://localhost:3001/api/schedules | jq '.available'
 ```
 
+### GET /api/metrics
+
+Returns performance metrics for the last N days by parsing daily log files. Provides insights into task completion, worker success rates, and timing data.
+
+**Query Parameters:**
+- `days` (optional, default: 7): Number of days to analyze
+
+**Response:**
+```json
+{
+  "metrics": {
+    "days": [
+      {
+        "date": "2026-03-22",
+        "tasksCompleted": 3,
+        "workerSpawned": 5,
+        "workerSuccess": 4,
+        "workerFailure": 1,
+        "decisionEngineAvailable": true,
+        "workLoopTicks": 144,
+        "avgTaskDurationMs": 125000,
+        "totalTaskDurationMs": 375000,
+        "commits": 8,
+        "avgTaskDurationFormatted": "2m 5s"
+      }
+    ],
+    "summary": {
+      "totalTasks": 42,
+      "totalWorkers": 48,
+      "successRate": 95.8,
+      "avgCompletionTimeMs": 185000,
+      "avgTasksPerDay": 6.0,
+      "commits": 52,
+      "avgCompletionTimeFormatted": "3m 5s"
+    }
+  },
+  "period": {
+    "days": 7,
+    "start": "2026-03-22",
+    "end": "2026-03-28"
+  },
+  "timestamp": "2026-03-29T04:07:00.000Z"
+}
+```
+
+**Metrics Explained:**
+- `tasksCompleted`: Number of worker tasks completed successfully
+- `workerSpawned`: Total workers spawned (may exceed completed due to in-progress work)
+- `workerSuccess`: Workers that completed successfully
+- `workerFailure`: Workers that failed or were blocked
+- `decisionEngineAvailable`: Whether decision engine was operational (false if any "unavailable" entries found)
+- `workLoopTicks`: Number of work loop cycles (runs every 10 minutes)
+- `avgTaskDurationMs`: Average time to complete a task (spawn to done)
+- `totalTaskDurationMs`: Total time spent on all tasks
+- `commits`: Git commits made during the period
+- `successRate`: (workerSuccess / totalWorkers) × 100
+
+**Examples:**
+```bash
+# Get last 7 days of metrics (default)
+curl http://localhost:3001/api/metrics
+
+# Get last 30 days of metrics
+curl http://localhost:3001/api/metrics?days=30
+
+# Get yesterday's metrics only
+curl http://localhost:3001/api/metrics?days=1
+
+# Get summary statistics
+curl http://localhost:3001/api/metrics | jq '.metrics.summary'
+
+# Get success rate
+curl http://localhost:3001/api/metrics | jq '.metrics.summary.successRate'
+
+# Get average completion time
+curl http://localhost:3001/api/metrics | jq '.metrics.summary.avgCompletionTimeFormatted'
+
+# Get daily breakdown
+curl http://localhost:3001/api/metrics | jq '.metrics.days[] | {date, tasksCompleted, successRate: (.workerSuccess / .workerSpawned * 100)}'
+
+# Find days with high task count
+curl http://localhost:3001/api/metrics | jq '.metrics.days[] | select(.tasksCompleted > 5)'
+
+# Calculate total commits this week
+curl http://localhost:3001/api/metrics | jq '.metrics.summary.commits'
+```
+
 ## Testing
 
 ```bash
@@ -323,9 +411,12 @@ npm run test:coverage # Coverage report
 ```
 agent-dashboard/
 ├── src/
-│   └── index.ts       # Express server + UI (< 500 lines)
+│   ├── index.ts           # Express server + UI
+│   └── lib/
+│       └── analytics.ts   # Metrics parsing and aggregation
 ├── tests/
-│   └── api.test.ts    # API endpoint tests
+│   ├── api.test.ts        # API endpoint tests
+│   └── analytics.test.ts  # Analytics module tests
 ├── package.json
 ├── tsconfig.json
 └── README.md
