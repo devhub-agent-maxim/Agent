@@ -307,14 +307,17 @@ describe('Agent Dashboard API', () => {
       expect(response.status).toBe(200);
       expect(response.type).toBe('text/html');
       expect(response.text).toContain('Agent Dashboard');
-      expect(response.text).toContain('/api/status');
+      expect(response.text).toContain('/api/recent-activity');
+      expect(response.text).toContain('/api/workers');
+      expect(response.text).toContain('/api/goals');
+      expect(response.text).toContain('/api/tasks');
     });
 
     it('should include auto-refresh script', async () => {
       const response = await request(app).get('/');
 
       expect(response.text).toContain('setInterval');
-      expect(response.text).toContain('fetchStatus');
+      expect(response.text).toContain('fetchAllData');
     });
   });
 });

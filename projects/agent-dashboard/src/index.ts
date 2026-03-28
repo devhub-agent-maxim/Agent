@@ -223,24 +223,28 @@ app.get('/', (req: Request, res: Response) => {
       padding: 20px;
     }
     h1 { color: #58a6ff; margin-bottom: 20px; font-size: 28px; }
-    h2 { color: #8b949e; font-size: 18px; margin: 20px 0 10px; border-bottom: 1px solid #21262d; padding-bottom: 5px; }
-    .container { max-width: 1400px; margin: 0 auto; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
+    h2 { color: #8b949e; font-size: 18px; margin: 15px 0 10px; border-bottom: 1px solid #21262d; padding-bottom: 5px; }
+    h3 { color: #7d8590; font-size: 15px; margin: 12px 0 8px; }
+    .container { max-width: 1600px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }
     .card {
       background: #161b22;
       border: 1px solid #30363d;
       border-radius: 6px;
       padding: 16px;
     }
+    .full-width { grid-column: 1 / -1; }
     .status-badge {
       display: inline-block;
       padding: 4px 8px;
       border-radius: 12px;
       font-size: 12px;
       font-weight: 600;
+      margin-left: 8px;
     }
     .badge-success { background: #238636; color: #fff; }
     .badge-warning { background: #9e6a03; color: #fff; }
+    .badge-info { background: #1f6feb; color: #fff; }
     .badge-error { background: #da3633; color: #fff; }
     .log-entry {
       font-size: 13px;
@@ -256,22 +260,24 @@ app.get('/', (req: Request, res: Response) => {
       border-radius: 4px;
       border-left: 3px solid #58a6ff;
     }
-    .goal-item {
+    .item {
       padding: 8px;
       margin: 6px 0;
       background: #0d1117;
       border-radius: 4px;
+      font-size: 14px;
+    }
+    .task-item { border-left: 3px solid #58a6ff; }
+    .goal-item { border-left: 3px solid #3fb950; }
+    .completed-item {
+      border-left: 3px solid #8b949e;
+      opacity: 0.7;
     }
     .timestamp {
       text-align: right;
       font-size: 12px;
       color: #8b949e;
-      margin-top: 10px;
-    }
-    .commit {
-      font-family: 'Courier New', monospace;
-      font-size: 13px;
-      padding: 4px 0;
+      margin-top: 15px;
     }
     .empty-state { color: #8b949e; font-style: italic; padding: 10px 0; }
     .refresh-indicator {
@@ -284,40 +290,60 @@ app.get('/', (req: Request, res: Response) => {
       font-size: 12px;
       opacity: 0;
       transition: opacity 0.3s;
+      z-index: 1000;
     }
     .refresh-indicator.show { opacity: 1; }
+    .section-count {
+      font-size: 13px;
+      color: #7d8590;
+      font-weight: normal;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>🤖 Agent Dashboard</h1>
 
-    <div class="grid">
-      <div class="card">
-        <h2>Active Goals</h2>
-        <div id="goals-active"></div>
-      </div>
-
-      <div class="card">
-        <h2>Active Workers</h2>
-        <div id="workers"></div>
-      </div>
+    <!-- Recent Activity Section -->
+    <div class="card full-width">
+      <h2>📊 Recent Activity <span class="section-count" id="activity-count">(0)</span></h2>
+      <div id="recent-activity"></div>
     </div>
 
-    <div class="card" style="margin-top: 20px;">
-      <h2>Recent Activity (Last 20 entries)</h2>
-      <div id="logs"></div>
-    </div>
-
+    <!-- Workers and Goals Grid -->
     <div class="grid" style="margin-top: 20px;">
       <div class="card">
-        <h2>Git Status</h2>
-        <div id="git"></div>
+        <h2>👷 Active Workers <span class="section-count" id="workers-count">(0)</span></h2>
+        <div id="workers"></div>
       </div>
 
       <div class="card">
-        <h2>Decision Engine</h2>
-        <div id="decision-engine"></div>
+        <h2>🎯 Goals</h2>
+        <h3>Active <span class="section-count" id="goals-active-count">(0)</span></h3>
+        <div id="goals-active"></div>
+        <h3 style="margin-top: 15px;">Waiting <span class="section-count" id="goals-waiting-count">(0)</span></h3>
+        <div id="goals-waiting"></div>
+        <h3 style="margin-top: 15px;">Completed (Last 3) <span class="section-count" id="goals-completed-count">(0)</span></h3>
+        <div id="goals-completed"></div>
+      </div>
+    </div>
+
+    <!-- Tasks Section -->
+    <div class="card" style="margin-top: 20px;">
+      <h2>✅ Tasks</h2>
+      <div class="grid">
+        <div>
+          <h3>In Progress <span class="section-count" id="tasks-progress-count">(0)</span></h3>
+          <div id="tasks-progress"></div>
+        </div>
+        <div>
+          <h3>Pending <span class="section-count" id="tasks-pending-count">(0)</span></h3>
+          <div id="tasks-pending"></div>
+        </div>
+        <div>
+          <h3>Completed (Last 5) <span class="section-count" id="tasks-completed-count">(0)</span></h3>
+          <div id="tasks-completed"></div>
+        </div>
       </div>
     </div>
 
@@ -327,82 +353,136 @@ app.get('/', (req: Request, res: Response) => {
   <div class="refresh-indicator" id="refresh-indicator">Refreshing...</div>
 
   <script>
-    async function fetchStatus() {
+    async function fetchAllData() {
       const indicator = document.getElementById('refresh-indicator');
       indicator.classList.add('show');
 
       try {
-        const response = await fetch('/api/status');
-        const data = await response.json();
+        // Fetch all endpoints in parallel
+        const [activityRes, workersRes, goalsRes, tasksRes] = await Promise.all([
+          fetch('/api/recent-activity?count=10'),
+          fetch('/api/workers'),
+          fetch('/api/goals'),
+          fetch('/api/tasks')
+        ]);
 
-        // Goals
-        const goalsActive = document.getElementById('goals-active');
-        if (data.goals.active.length === 0) {
-          goalsActive.innerHTML = '<div class="empty-state">No active goals</div>';
+        const [activity, workers, goals, tasks] = await Promise.all([
+          activityRes.json(),
+          workersRes.json(),
+          goalsRes.json(),
+          tasksRes.json()
+        ]);
+
+        // Recent Activity
+        const activityDiv = document.getElementById('recent-activity');
+        document.getElementById('activity-count').textContent = \`(\${activity.count})\`;
+        if (activity.activity.length === 0) {
+          activityDiv.innerHTML = '<div class="empty-state">No recent activity</div>';
         } else {
-          goalsActive.innerHTML = data.goals.active.map(g =>
-            \`<div class="goal-item">\${g}</div>\`
+          activityDiv.innerHTML = activity.activity.map(entry =>
+            \`<div class="log-entry">\${entry}</div>\`
           ).join('');
         }
 
         // Workers
-        const workers = document.getElementById('workers');
-        if (data.workers.length === 0) {
-          workers.innerHTML = '<div class="empty-state">No active workers</div>';
+        const workersDiv = document.getElementById('workers');
+        document.getElementById('workers-count').textContent = \`(\${workers.count})\`;
+        if (workers.workers.length === 0) {
+          workersDiv.innerHTML = '<div class="empty-state">No active workers</div>';
         } else {
-          workers.innerHTML = data.workers.map(w =>
+          workersDiv.innerHTML = workers.workers.map(w =>
             \`<div class="worker-item">
               <strong>\${w.id}</strong><br>
               <small>\${w.task}</small><br>
-              <small>Running: \${Math.round(w.runningMs / 1000)}s</small>
+              <small style="color: #58a6ff;">Running: \${Math.round(w.runningMs / 1000)}s</small>
             </div>\`
           ).join('');
         }
 
-        // Logs
-        const logs = document.getElementById('logs');
-        if (data.recentLogs.length === 0) {
-          logs.innerHTML = '<div class="empty-state">No log entries</div>';
+        // Goals - Active
+        const goalsActiveDiv = document.getElementById('goals-active');
+        document.getElementById('goals-active-count').textContent = \`(\${goals.summary.active})\`;
+        if (goals.goals.active.length === 0) {
+          goalsActiveDiv.innerHTML = '<div class="empty-state">No active goals</div>';
         } else {
-          logs.innerHTML = data.recentLogs.map(l =>
-            \`<div class="log-entry">\${l}</div>\`
+          goalsActiveDiv.innerHTML = goals.goals.active.map(g =>
+            \`<div class="item goal-item">\${g}</div>\`
           ).join('');
         }
 
-        // Git
-        const git = document.getElementById('git');
-        git.innerHTML = \`
-          <div><strong>Branch:</strong> \${data.git.branch}</div>
-          <h3 style="margin-top: 10px; font-size: 14px; color: #8b949e;">Recent Commits:</h3>
-          \${data.git.commits.map(c => \`<div class="commit">\${c}</div>\`).join('')}
-        \`;
+        // Goals - Waiting
+        const goalsWaitingDiv = document.getElementById('goals-waiting');
+        document.getElementById('goals-waiting-count').textContent = \`(\${goals.summary.waiting})\`;
+        if (goals.goals.waiting.length === 0) {
+          goalsWaitingDiv.innerHTML = '<div class="empty-state">No waiting goals</div>';
+        } else {
+          goalsWaitingDiv.innerHTML = goals.goals.waiting.map(g =>
+            \`<div class="item goal-item">\${g}</div>\`
+          ).join('');
+        }
 
-        // Decision Engine
-        const de = document.getElementById('decision-engine');
-        const badgeClass = data.decisionEngine.available ? 'badge-success' : 'badge-error';
-        de.innerHTML = \`
-          <span class="status-badge \${badgeClass}">
-            \${data.decisionEngine.available ? '✓ Available' : '✗ Unavailable'}
-          </span>
-          <div style="margin-top: 8px;">\${data.decisionEngine.message}</div>
-        \`;
+        // Goals - Completed (last 3)
+        const goalsCompletedDiv = document.getElementById('goals-completed');
+        document.getElementById('goals-completed-count').textContent = \`(\${goals.summary.completed})\`;
+        if (goals.goals.completed.length === 0) {
+          goalsCompletedDiv.innerHTML = '<div class="empty-state">No completed goals</div>';
+        } else {
+          const lastThree = goals.goals.completed.slice(-3).reverse();
+          goalsCompletedDiv.innerHTML = lastThree.map(g =>
+            \`<div class="item completed-item">\${g}</div>\`
+          ).join('');
+        }
 
-        // Timestamp
+        // Tasks - In Progress
+        const tasksProgressDiv = document.getElementById('tasks-progress');
+        document.getElementById('tasks-progress-count').textContent = \`(\${tasks.summary.inProgress})\`;
+        if (tasks.tasks.inProgress.length === 0) {
+          tasksProgressDiv.innerHTML = '<div class="empty-state">No tasks in progress</div>';
+        } else {
+          tasksProgressDiv.innerHTML = tasks.tasks.inProgress.map(t =>
+            \`<div class="item task-item">\${t}</div>\`
+          ).join('');
+        }
+
+        // Tasks - Pending
+        const tasksPendingDiv = document.getElementById('tasks-pending');
+        document.getElementById('tasks-pending-count').textContent = \`(\${tasks.summary.pending})\`;
+        if (tasks.tasks.pending.length === 0) {
+          tasksPendingDiv.innerHTML = '<div class="empty-state">No pending tasks</div>';
+        } else {
+          tasksPendingDiv.innerHTML = tasks.tasks.pending.map(t =>
+            \`<div class="item task-item">\${t}</div>\`
+          ).join('');
+        }
+
+        // Tasks - Completed (last 5)
+        const tasksCompletedDiv = document.getElementById('tasks-completed');
+        document.getElementById('tasks-completed-count').textContent = \`(\${tasks.summary.completed})\`;
+        if (tasks.tasks.completed.length === 0) {
+          tasksCompletedDiv.innerHTML = '<div class="empty-state">No completed tasks</div>';
+        } else {
+          const lastFive = tasks.tasks.completed.slice(-5).reverse();
+          tasksCompletedDiv.innerHTML = lastFive.map(t =>
+            \`<div class="item completed-item">\${t}</div>\`
+          ).join('');
+        }
+
+        // Update timestamp
         document.getElementById('timestamp').textContent =
-          'Last updated: ' + new Date(data.timestamp).toLocaleString();
+          'Last updated: ' + new Date().toLocaleString();
 
       } catch (err) {
-        console.error('Failed to fetch status:', err);
+        console.error('Failed to fetch dashboard data:', err);
       }
 
       setTimeout(() => indicator.classList.remove('show'), 500);
     }
 
     // Initial fetch
-    fetchStatus();
+    fetchAllData();
 
-    // Auto-refresh every 10 seconds
-    setInterval(fetchStatus, 10000);
+    // Auto-refresh every 5 seconds
+    setInterval(fetchAllData, 5000);
   </script>
 </body>
 </html>`);
