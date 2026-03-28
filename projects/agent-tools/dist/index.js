@@ -8,6 +8,7 @@ const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
 const todos_1 = __importDefault(require("./routes/todos"));
 const swagger_1 = require("./swagger");
 const database_1 = require("./db/database");
+const error_handler_1 = require("./middleware/error-handler");
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
 // Initialize database
@@ -23,6 +24,8 @@ app.get('/health', (req, res) => {
 });
 // Mount TODO routes
 app.use('/todos', todos_1.default);
+// Error handler must be registered last
+app.use(error_handler_1.errorHandler);
 if (require.main === module) {
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);

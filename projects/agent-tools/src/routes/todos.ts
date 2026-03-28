@@ -3,6 +3,8 @@ import { CreateTodoInput, UpdateTodoInput } from '../models/todo';
 import { todoRepository } from '../db/todos-repository';
 import { authenticateApiKey } from '../middleware/auth';
 import { todoRateLimiter } from '../middleware/rate-limiter';
+import { ValidationError, NotFoundError } from '../middleware/error-handler';
+import { asyncHandler } from '../middleware/async-handler';
 
 const router = Router();
 
@@ -13,58 +15,53 @@ router.use(authenticateApiKey);
 router.use(todoRateLimiter);
 
 // Validation helpers
-const validateCreateInput = (body: any): { valid: boolean; error?: string } => {
+const validateCreateInput = (body: any): void => {
   if (!body.title || typeof body.title !== 'string') {
-    return { valid: false, error: 'Title is required and must be a string' };
+    throw new ValidationError('Title is required and must be a string');
   }
   if (body.title.trim().length === 0) {
-    return { valid: false, error: 'Title cannot be empty' };
+    throw new ValidationError('Title cannot be empty');
   }
   if (body.title.length > 200) {
-    return { valid: false, error: 'Title cannot exceed 200 characters' };
+    throw new ValidationError('Title cannot exceed 200 characters');
   }
   if (body.description !== undefined && typeof body.description !== 'string') {
-    return { valid: false, error: 'Description must be a string' };
+    throw new ValidationError('Description must be a string');
   }
   if (body.description && body.description.length > 1000) {
-    return { valid: false, error: 'Description cannot exceed 1000 characters' };
+    throw new ValidationError('Description cannot exceed 1000 characters');
   }
-  return { valid: true };
 };
 
-const validateUpdateInput = (body: any): { valid: boolean; error?: string } => {
+const validateUpdateInput = (body: any): void => {
   if (Object.keys(body).length === 0) {
-    return { valid: false, error: 'At least one field must be provided for update' };
+    throw new ValidationError('At least one field must be provided for update');
   }
   if (body.title !== undefined) {
     if (typeof body.title !== 'string') {
-      return { valid: false, error: 'Title must be a string' };
+      throw new ValidationError('Title must be a string');
     }
     if (body.title.trim().length === 0) {
-      return { valid: false, error: 'Title cannot be empty' };
+      throw new ValidationError('Title cannot be empty');
     }
     if (body.title.length > 200) {
-      return { valid: false, error: 'Title cannot exceed 200 characters' };
+      throw new ValidationError('Title cannot exceed 200 characters');
     }
   }
   if (body.description !== undefined && typeof body.description !== 'string') {
-    return { valid: false, error: 'Description must be a string' };
+    throw new ValidationError('Description must be a string');
   }
   if (body.description && body.description.length > 1000) {
-    return { valid: false, error: 'Description cannot exceed 1000 characters' };
+    throw new ValidationError('Description cannot exceed 1000 characters');
   }
   if (body.completed !== undefined && typeof body.completed !== 'boolean') {
-    return { valid: false, error: 'Completed must be a boolean' };
+    throw new ValidationError('Completed must be a boolean');
   }
-  return { valid: true };
 };
 
 // POST /todos - Create a new todo
-router.post('/', (req: Request, res: Response) => {
-  const validation = validateCreateInput(req.body);
-  if (!validation.valid) {
-    return res.status(400).json({ error: validation.error });
-  }
+router.post('/', asyncHandler(async (req: Request, res: Response) => {
+  validateCreateInput(req.body);
 
   const input: CreateTodoInput = {
     title: req.body.title.trim(),
@@ -73,34 +70,31 @@ router.post('/', (req: Request, res: Response) => {
 
   const todo = todoRepository.create(input);
   res.status(201).json(todo);
-});
+}));
 
 // GET /todos - Get all todos
-router.get('/', (req: Request, res: Response) => {
+router.get('/', asyncHandler(async (req: Request, res: Response) => {
   const todos = todoRepository.findAll();
   res.json(todos);
-});
+}));
 
 // GET /todos/:id - Get a specific todo
-router.get('/:id', (req: Request, res: Response) => {
+router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const todo = todoRepository.findById(id);
 
   if (!todo) {
-    return res.status(404).json({ error: 'Todo not found' });
+    throw new NotFoundError('Todo not found');
   }
 
   res.json(todo);
-});
+}));
 
 // PUT /todos/:id - Update a todo
-router.put('/:id', (req: Request, res: Response) => {
+router.put('/:id', asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
 
-  const validation = validateUpdateInput(req.body);
-  if (!validation.valid) {
-    return res.status(400).json({ error: validation.error });
-  }
+  validateUpdateInput(req.body);
 
   const input: UpdateTodoInput = {};
   if (req.body.title !== undefined) {
@@ -116,22 +110,22 @@ router.put('/:id', (req: Request, res: Response) => {
   const todo = todoRepository.update(id, input);
 
   if (!todo) {
-    return res.status(404).json({ error: 'Todo not found' });
+    throw new NotFoundError('Todo not found');
   }
 
   res.json(todo);
-});
+}));
 
 // DELETE /todos/:id - Delete a todo
-router.delete('/:id', (req: Request, res: Response) => {
+router.delete('/:id', asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const deleted = todoRepository.delete(id);
 
   if (!deleted) {
-    return res.status(404).json({ error: 'Todo not found' });
+    throw new NotFoundError('Todo not found');
   }
 
   res.status(204).send();
-});
+}));
 
 export default router;
