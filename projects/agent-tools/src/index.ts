@@ -6,6 +6,7 @@ import { initializeDatabase } from './db/database';
 import { errorHandler } from './middleware/error-handler';
 import { requestLogger } from './middleware/request-logger';
 import { corsMiddleware } from './middleware/cors-config';
+import { securityHeaders } from './middleware/security-headers';
 import { logger } from './utils/logger';
 
 const app = express();
@@ -13,6 +14,9 @@ const PORT = process.env.PORT || 3000;
 
 // Initialize database
 initializeDatabase();
+
+// Security headers middleware - must be first for all responses
+app.use(securityHeaders);
 
 // Request logging middleware - must be before other middleware
 app.use(requestLogger);

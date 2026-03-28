@@ -10,11 +10,12 @@ A TypeScript + Express REST API for productivity tools with SQLite persistence a
 - ✅ Bearer token authentication
 - ✅ Rate limiting (100 requests per 15 minutes per IP)
 - ✅ CORS with configurable allowed origins
+- ✅ Security headers with helmet (CSP, HSTS, XSS protection)
 - ✅ Structured logging with Winston
 - ✅ Request tracking with unique request IDs
 - ✅ Centralized error handling
 - ✅ OpenAPI/Swagger documentation
-- ✅ Comprehensive test coverage (110+ tests)
+- ✅ Comprehensive test coverage (125+ tests)
 - ✅ TypeScript with strict type checking
 
 ## Getting Started
@@ -264,6 +265,39 @@ has been blocked by CORS policy: Origin not allowed by CORS policy
 - Keep the allowed origins list minimal - only include trusted domains
 - Regularly audit and remove unused origins
 - Use HTTPS origins in production
+
+### Security Headers
+
+The API uses **helmet** middleware to set comprehensive security headers that protect against common web vulnerabilities.
+
+**Headers Applied:**
+
+| Header | Value | Protection |
+|--------|-------|------------|
+| `Content-Security-Policy` | Strict CSP with `'self'` directives | Prevents XSS and data injection attacks |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` | Forces HTTPS connections for 1 year |
+| `X-Frame-Options` | `DENY` | Prevents clickjacking by blocking iframe embedding |
+| `X-Content-Type-Options` | `nosniff` | Prevents MIME type sniffing attacks |
+| `X-DNS-Prefetch-Control` | `off` | Disables DNS prefetching for privacy |
+| `X-Download-Options` | `noopen` | Prevents IE from executing downloads in site context |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Controls referrer information leakage |
+| `X-Permitted-Cross-Domain-Policies` | `none` | Restricts Adobe Flash/PDF cross-domain access |
+
+**Additional Protections:**
+- ✅ `X-Powered-By` header removed (server fingerprinting prevention)
+- ✅ CSP includes `frame-ancestors 'none'` (clickjacking protection)
+- ✅ CSP includes `upgrade-insecure-requests` (automatic HTTPS upgrade)
+- ✅ HSTS preload flag enabled (browser HSTS preload list inclusion)
+
+**Security Headers for REST APIs:**
+
+This configuration is optimized for REST API services:
+- Strict Content-Security-Policy prevents script execution
+- Frame blocking prevents UI redressing attacks
+- HSTS ensures encrypted transport layer
+- No script sources allowed (API responses should be JSON, not HTML/JS)
+
+**Note:** These headers are applied to all routes automatically, including health checks, API documentation, and TODO endpoints.
 
 ## Logging
 
