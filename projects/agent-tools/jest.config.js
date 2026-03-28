@@ -7,4 +7,7 @@ module.exports = {
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts'],
   coverageDirectory: 'coverage',
+  transformIgnorePatterns: [
+    'node_modules/(?!(uuid)/)'
+  ],
 };

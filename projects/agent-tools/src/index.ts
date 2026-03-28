@@ -4,12 +4,17 @@ import todosRouter from './routes/todos';
 import { swaggerSpec } from './swagger';
 import { initializeDatabase } from './db/database';
 import { errorHandler } from './middleware/error-handler';
+import { requestLogger } from './middleware/request-logger';
+import { logger } from './utils/logger';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Initialize database
 initializeDatabase();
+
+// Request logging middleware - must be before other middleware
+app.use(requestLogger);
 
 app.use(express.json());
 
@@ -31,7 +36,7 @@ app.use(errorHandler);
 
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    logger.info(`Server running on port ${PORT}`);
   });
 }
 

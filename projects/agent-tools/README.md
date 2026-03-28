@@ -8,8 +8,10 @@ A TypeScript + Express REST API for productivity tools with SQLite persistence a
 - ✅ SQLite database persistence with better-sqlite3
 - ✅ Bearer token authentication
 - ✅ Rate limiting (100 requests per 15 minutes per IP)
+- ✅ Structured logging with Winston
+- ✅ Request tracking with unique request IDs
 - ✅ OpenAPI/Swagger documentation
-- ✅ Comprehensive test coverage (48 tests)
+- ✅ Comprehensive test coverage (75+ tests)
 - ✅ TypeScript with strict type checking
 
 ## Getting Started
@@ -30,6 +32,9 @@ API_KEYS=your-secret-key-1,your-secret-key-2,your-secret-key-3
 
 # Optional: Server port (default: 3000)
 PORT=3000
+
+# Optional: Log level - error, warn, info, debug (default: info)
+LOG_LEVEL=info
 ```
 
 **Important**: Never commit your `.env` file to version control. API keys are sensitive credentials.
@@ -176,6 +181,99 @@ All `/todos/*` endpoints are protected by rate limiting to prevent abuse and ens
 - Cache responses when possible to reduce API calls
 - Distribute requests evenly throughout the time window
 
+## Logging
+
+The application uses **Winston** for structured logging with configurable log levels and request tracking.
+
+### Log Levels
+
+Configure logging verbosity via the `LOG_LEVEL` environment variable:
+
+| Level   | Priority | Description |
+|---------|----------|-------------|
+| `error` | 0 (highest) | Critical errors that need immediate attention |
+| `warn`  | 1        | Warning messages for potential issues |
+| `info`  | 2 (default) | General informational messages |
+| `debug` | 3        | Detailed debugging information |
+
+**Example:**
+```env
+LOG_LEVEL=debug  # Show all logs including debug
+LOG_LEVEL=warn   # Show only warnings and errors
+```
+
+### Request Tracking
+
+Every incoming request is automatically assigned a **unique request ID** (UUID v4) that appears in all related logs. This enables easy tracing of requests through the system.
+
+**Request Log Format:**
+```json
+{
+  "timestamp": "2026-03-29 02:15:00",
+  "level": "info",
+  "message": "Incoming request",
+  "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "method": "GET",
+  "path": "/todos",
+  "query": {},
+  "ip": "::1"
+}
+```
+
+**Completion Log Format:**
+```json
+{
+  "timestamp": "2026-03-29 02:15:00",
+  "level": "info",
+  "message": "Request completed",
+  "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "method": "GET",
+  "path": "/todos",
+  "statusCode": 200,
+  "duration": "45ms"
+}
+```
+
+### Error Logging
+
+Errors are automatically logged with full context:
+
+- **Operational errors** (4xx status codes): Logged at `warn` level
+- **System errors** (5xx status codes): Logged at `error` level with stack traces
+
+**Error Log Example:**
+```json
+{
+  "timestamp": "2026-03-29 02:15:00",
+  "level": "error",
+  "message": "Error occurred",
+  "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "statusCode": 500,
+  "path": "/todos/123",
+  "method": "GET",
+  "stack": "Error: Database connection failed\n    at ..."
+}
+```
+
+### Log Output Formats
+
+- **Development**: Human-readable colorized console output
+- **Production**: Structured JSON for log aggregation services
+
+### Using Logger in Code
+
+```typescript
+import { logger, createLogger } from './utils/logger';
+
+// Basic logging
+logger.info('User action completed');
+logger.error('Failed to process request', { userId: '123' });
+
+// Child logger with context
+const dbLogger = createLogger('Database');
+dbLogger.debug('Query executed', { query: 'SELECT * FROM todos' });
+```
+
 ## Database
 
 The application uses SQLite for persistence. The database file is stored at `data/agent-tools.db` and is automatically created on first run.
@@ -202,16 +300,25 @@ agent-tools/
 │   │   ├── database.ts          # Database initialization
 │   │   └── todos-repository.ts  # Repository pattern for TODOs
 │   ├── middleware/
-│   │   └── auth.ts              # Bearer token authentication
+│   │   ├── auth.ts              # Bearer token authentication
+│   │   ├── error-handler.ts     # Centralized error handling
+│   │   ├── rate-limiter.ts      # Rate limiting
+│   │   └── request-logger.ts    # Request logging & tracking
 │   ├── models/
 │   │   └── todo.ts              # TypeScript interfaces
 │   ├── routes/
 │   │   └── todos.ts             # TODO API routes
+│   ├── utils/
+│   │   └── logger.ts            # Winston logger configuration
 │   ├── index.ts                 # Express app setup
 │   └── swagger.ts               # OpenAPI specification
 ├── tests/
 │   ├── auth.test.ts             # Authentication tests
+│   ├── error-handler.test.ts    # Error handling tests
 │   ├── health.test.ts           # Health check tests
+│   ├── logger.test.ts           # Logger configuration tests
+│   ├── rate-limiter.test.ts     # Rate limiting tests
+│   ├── request-logger.test.ts   # Request logging tests
 │   ├── todos.test.ts            # TODO CRUD tests
 │   └── todos-persistence.test.ts # Database persistence tests
 ├── data/                         # SQLite database (gitignored)
