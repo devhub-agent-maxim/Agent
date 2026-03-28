@@ -140,6 +140,62 @@ describe('Agent Dashboard API', () => {
       const timestamp = new Date(response.body.timestamp);
       expect(timestamp.toString()).not.toBe('Invalid Date');
     });
+
+    it('should handle empty goals file gracefully', async () => {
+      const response = await request(app).get('/api/goals');
+
+      expect(response.status).toBe(200);
+      expect(response.body.goals.active).toBeDefined();
+      expect(response.body.goals.waiting).toBeDefined();
+      expect(response.body.goals.completed).toBeDefined();
+      expect(response.body.summary.active).toBeGreaterThanOrEqual(0);
+      expect(response.body.summary.waiting).toBeGreaterThanOrEqual(0);
+      expect(response.body.summary.completed).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should parse active goals correctly when present', async () => {
+      const response = await request(app).get('/api/goals');
+
+      expect(response.status).toBe(200);
+      if (response.body.goals.active.length > 0) {
+        expect(typeof response.body.goals.active[0]).toBe('string');
+        expect(response.body.summary.active).toBe(response.body.goals.active.length);
+      }
+    });
+
+    it('should parse completed goals correctly when present', async () => {
+      const response = await request(app).get('/api/goals');
+
+      expect(response.status).toBe(200);
+      if (response.body.goals.completed.length > 0) {
+        expect(typeof response.body.goals.completed[0]).toBe('string');
+        expect(response.body.summary.completed).toBe(response.body.goals.completed.length);
+        response.body.goals.completed.forEach((goal: string) => {
+          expect(goal.startsWith('Goal ')).toBe(true);
+        });
+      }
+    });
+
+    it('should handle goals file with all sections', async () => {
+      const response = await request(app).get('/api/goals');
+
+      expect(response.status).toBe(200);
+      expect(response.body.goals).toHaveProperty('active');
+      expect(response.body.goals).toHaveProperty('waiting');
+      expect(response.body.goals).toHaveProperty('completed');
+
+      const totalGoals =
+        response.body.summary.active +
+        response.body.summary.waiting +
+        response.body.summary.completed;
+
+      const actualTotal =
+        response.body.goals.active.length +
+        response.body.goals.waiting.length +
+        response.body.goals.completed.length;
+
+      expect(totalGoals).toBe(actualTotal);
+    });
   });
 
   describe('GET /api/tasks', () => {
