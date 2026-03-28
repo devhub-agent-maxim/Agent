@@ -7,8 +7,11 @@ const express_1 = __importDefault(require("express"));
 const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
 const todos_1 = __importDefault(require("./routes/todos"));
 const swagger_1 = require("./swagger");
+const database_1 = require("./db/database");
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
+// Initialize database
+(0, database_1.initializeDatabase)();
 app.use(express_1.default.json());
 // Swagger documentation
 app.use('/api-docs', swagger_ui_express_1.default.serve, swagger_ui_express_1.default.setup(swagger_1.swaggerSpec));

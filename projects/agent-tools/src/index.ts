@@ -2,9 +2,13 @@ import express, { Request, Response } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import todosRouter from './routes/todos';
 import { swaggerSpec } from './swagger';
+import { initializeDatabase } from './db/database';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Initialize database
+initializeDatabase();
 
 app.use(express.json());
 

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { todoStore, CreateTodoInput, UpdateTodoInput } from '../models/todo';
+import { CreateTodoInput, UpdateTodoInput } from '../models/todo';
+import { todoRepository } from '../db/todos-repository';
 
 const router = Router();
 
@@ -62,20 +63,20 @@ router.post('/', (req: Request, res: Response) => {
     description: req.body.description?.trim()
   };
 
-  const todo = todoStore.create(input);
+  const todo = todoRepository.create(input);
   res.status(201).json(todo);
 });
 
 // GET /todos - Get all todos
 router.get('/', (req: Request, res: Response) => {
-  const todos = todoStore.findAll();
+  const todos = todoRepository.findAll();
   res.json(todos);
 });
 
 // GET /todos/:id - Get a specific todo
 router.get('/:id', (req: Request, res: Response) => {
   const { id } = req.params;
-  const todo = todoStore.findById(id);
+  const todo = todoRepository.findById(id);
 
   if (!todo) {
     return res.status(404).json({ error: 'Todo not found' });
@@ -104,7 +105,7 @@ router.put('/:id', (req: Request, res: Response) => {
     input.completed = req.body.completed;
   }
 
-  const todo = todoStore.update(id, input);
+  const todo = todoRepository.update(id, input);
 
   if (!todo) {
     return res.status(404).json({ error: 'Todo not found' });
@@ -116,7 +117,7 @@ router.put('/:id', (req: Request, res: Response) => {
 // DELETE /todos/:id - Delete a todo
 router.delete('/:id', (req: Request, res: Response) => {
   const { id } = req.params;
-  const deleted = todoStore.delete(id);
+  const deleted = todoRepository.delete(id);
 
   if (!deleted) {
     return res.status(404).json({ error: 'Todo not found' });

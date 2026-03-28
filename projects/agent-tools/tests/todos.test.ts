@@ -1,11 +1,11 @@
 import request from 'supertest';
 import app from '../src/index';
-import { todoStore } from '../src/models/todo';
+import { todoRepository } from '../src/db/todos-repository';
 
 describe('TODO API', () => {
   beforeEach(() => {
-    // Clear the store before each test
-    todoStore.clear();
+    // Clear the repository before each test
+    todoRepository.clear();
   });
 
   describe('POST /todos', () => {

@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
-const todo_1 = require("../models/todo");
+const todos_repository_1 = require("../db/todos-repository");
 const router = (0, express_1.Router)();
 // Validation helpers
 const validateCreateInput = (body) => {
@@ -58,18 +58,18 @@ router.post('/', (req, res) => {
         title: req.body.title.trim(),
         description: req.body.description?.trim()
     };
-    const todo = todo_1.todoStore.create(input);
+    const todo = todos_repository_1.todoRepository.create(input);
     res.status(201).json(todo);
 });
 // GET /todos - Get all todos
 router.get('/', (req, res) => {
-    const todos = todo_1.todoStore.findAll();
+    const todos = todos_repository_1.todoRepository.findAll();
     res.json(todos);
 });
 // GET /todos/:id - Get a specific todo
 router.get('/:id', (req, res) => {
     const { id } = req.params;
-    const todo = todo_1.todoStore.findById(id);
+    const todo = todos_repository_1.todoRepository.findById(id);
     if (!todo) {
         return res.status(404).json({ error: 'Todo not found' });
     }
@@ -92,7 +92,7 @@ router.put('/:id', (req, res) => {
     if (req.body.completed !== undefined) {
         input.completed = req.body.completed;
     }
-    const todo = todo_1.todoStore.update(id, input);
+    const todo = todos_repository_1.todoRepository.update(id, input);
     if (!todo) {
         return res.status(404).json({ error: 'Todo not found' });
     }
@@ -101,7 +101,7 @@ router.put('/:id', (req, res) => {
 // DELETE /todos/:id - Delete a todo
 router.delete('/:id', (req, res) => {
     const { id } = req.params;
-    const deleted = todo_1.todoStore.delete(id);
+    const deleted = todos_repository_1.todoRepository.delete(id);
     if (!deleted) {
         return res.status(404).json({ error: 'Todo not found' });
     }
