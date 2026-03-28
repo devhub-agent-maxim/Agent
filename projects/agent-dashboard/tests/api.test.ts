@@ -1,0 +1,85 @@
+import request from 'supertest';
+import app from '../src/index';
+
+describe('Agent Dashboard API', () => {
+  describe('GET /api/status', () => {
+    it('should return status object with all required fields', async () => {
+      const response = await request(app).get('/api/status');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('goals');
+      expect(response.body).toHaveProperty('workers');
+      expect(response.body).toHaveProperty('recentLogs');
+      expect(response.body).toHaveProperty('git');
+      expect(response.body).toHaveProperty('decisionEngine');
+      expect(response.body).toHaveProperty('timestamp');
+    });
+
+    it('should return goals with active, waiting, and completed arrays', async () => {
+      const response = await request(app).get('/api/status');
+
+      expect(response.body.goals).toHaveProperty('active');
+      expect(response.body.goals).toHaveProperty('waiting');
+      expect(response.body.goals).toHaveProperty('completed');
+      expect(Array.isArray(response.body.goals.active)).toBe(true);
+      expect(Array.isArray(response.body.goals.waiting)).toBe(true);
+      expect(Array.isArray(response.body.goals.completed)).toBe(true);
+    });
+
+    it('should return workers array', async () => {
+      const response = await request(app).get('/api/status');
+
+      expect(Array.isArray(response.body.workers)).toBe(true);
+    });
+
+    it('should return recent logs array', async () => {
+      const response = await request(app).get('/api/status');
+
+      expect(Array.isArray(response.body.recentLogs)).toBe(true);
+    });
+
+    it('should return git status with branch and commits', async () => {
+      const response = await request(app).get('/api/status');
+
+      expect(response.body.git).toHaveProperty('branch');
+      expect(response.body.git).toHaveProperty('commits');
+      expect(typeof response.body.git.branch).toBe('string');
+      expect(Array.isArray(response.body.git.commits)).toBe(true);
+    });
+
+    it('should return decision engine status', async () => {
+      const response = await request(app).get('/api/status');
+
+      expect(response.body.decisionEngine).toHaveProperty('available');
+      expect(response.body.decisionEngine).toHaveProperty('message');
+      expect(typeof response.body.decisionEngine.available).toBe('boolean');
+      expect(typeof response.body.decisionEngine.message).toBe('string');
+    });
+
+    it('should return valid ISO timestamp', async () => {
+      const response = await request(app).get('/api/status');
+
+      expect(response.body.timestamp).toBeDefined();
+      const timestamp = new Date(response.body.timestamp);
+      expect(timestamp.toString()).not.toBe('Invalid Date');
+    });
+  });
+
+  describe('GET /', () => {
+    it('should return HTML dashboard', async () => {
+      const response = await request(app).get('/');
+
+      expect(response.status).toBe(200);
+      expect(response.type).toBe('text/html');
+      expect(response.text).toContain('Agent Dashboard');
+      expect(response.text).toContain('/api/status');
+    });
+
+    it('should include auto-refresh script', async () => {
+      const response = await request(app).get('/');
+
+      expect(response.text).toContain('setInterval');
+      expect(response.text).toContain('fetchStatus');
+    });
+  });
+});
