@@ -206,6 +206,35 @@ app.get('/api/workers', (req: Request, res: Response) => {
   });
 });
 
+app.get('/api/schedules', async (req: Request, res: Response) => {
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const response = await fetch('http://localhost:3002/schedules');
+
+    if (!response.ok) {
+      throw new Error(`Scheduler API returned ${response.status}`);
+    }
+
+    const data = await response.json() as { schedules: any[]; count: number };
+
+    res.json({
+      schedules: data.schedules,
+      count: data.count,
+      available: true,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    // Scheduler service unavailable
+    res.json({
+      schedules: [],
+      count: 0,
+      available: false,
+      error: 'Scheduler service not available',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 // Web UI
 app.get('/', (req: Request, res: Response) => {
   res.send(`<!DOCTYPE html>
@@ -298,6 +327,40 @@ app.get('/', (req: Request, res: Response) => {
       color: #7d8590;
       font-weight: normal;
     }
+    .schedule-item {
+      background: #0d1117;
+      padding: 12px;
+      margin: 8px 0;
+      border-radius: 4px;
+      border-left: 3px solid #a371f7;
+    }
+    .schedule-disabled {
+      opacity: 0.5;
+      border-left-color: #6e7681;
+    }
+    .schedule-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .schedule-name {
+      font-weight: 600;
+      font-size: 14px;
+      color: #c9d1d9;
+    }
+    .schedule-details {
+      font-size: 12px;
+      color: #8b949e;
+      margin: 4px 0;
+    }
+    .schedule-cron {
+      font-family: 'Courier New', monospace;
+      background: #161b22;
+      padding: 2px 6px;
+      border-radius: 3px;
+      color: #58a6ff;
+    }
   </style>
 </head>
 <body>
@@ -347,6 +410,12 @@ app.get('/', (req: Request, res: Response) => {
       </div>
     </div>
 
+    <!-- Scheduled Tasks Section -->
+    <div class="card" style="margin-top: 20px;">
+      <h2>⏰ Scheduled Tasks <span class="section-count" id="schedules-count">(0)</span></h2>
+      <div id="schedules"></div>
+    </div>
+
     <div class="timestamp" id="timestamp"></div>
   </div>
 
@@ -359,18 +428,20 @@ app.get('/', (req: Request, res: Response) => {
 
       try {
         // Fetch all endpoints in parallel
-        const [activityRes, workersRes, goalsRes, tasksRes] = await Promise.all([
+        const [activityRes, workersRes, goalsRes, tasksRes, schedulesRes] = await Promise.all([
           fetch('/api/recent-activity?count=10'),
           fetch('/api/workers'),
           fetch('/api/goals'),
-          fetch('/api/tasks')
+          fetch('/api/tasks'),
+          fetch('/api/schedules')
         ]);
 
-        const [activity, workers, goals, tasks] = await Promise.all([
+        const [activity, workers, goals, tasks, schedules] = await Promise.all([
           activityRes.json(),
           workersRes.json(),
           goalsRes.json(),
-          tasksRes.json()
+          tasksRes.json(),
+          schedulesRes.json()
         ]);
 
         // Recent Activity
@@ -465,6 +536,37 @@ app.get('/', (req: Request, res: Response) => {
           tasksCompletedDiv.innerHTML = lastFive.map(t =>
             \`<div class="item completed-item">\${t}</div>\`
           ).join('');
+        }
+
+        // Scheduled Tasks
+        const schedulesDiv = document.getElementById('schedules');
+        document.getElementById('schedules-count').textContent = \`(\${schedules.count})\`;
+        if (!schedules.available) {
+          schedulesDiv.innerHTML = '<div class="empty-state">⚠️ Scheduler service not available</div>';
+        } else if (schedules.schedules.length === 0) {
+          schedulesDiv.innerHTML = '<div class="empty-state">No scheduled tasks</div>';
+        } else {
+          schedulesDiv.innerHTML = schedules.schedules.map(s => {
+            const lastRun = s.last_run ? new Date(s.last_run).toLocaleString() : 'Never';
+            const nextRun = s.next_run ? new Date(s.next_run).toLocaleString() : 'Not scheduled';
+            const enabled = s.enabled === 1;
+            const statusBadge = enabled ?
+              '<span class="status-badge badge-success">Enabled</span>' :
+              '<span class="status-badge badge-warning">Disabled</span>';
+
+            return \`<div class="schedule-item \${enabled ? '' : 'schedule-disabled'}">
+              <div class="schedule-header">
+                <span class="schedule-name">\${s.name}</span>
+                \${statusBadge}
+              </div>
+              <div class="schedule-details">
+                <strong>Cron:</strong> <span class="schedule-cron">\${s.cron_expression}</span>
+              </div>
+              <div class="schedule-details"><strong>Command:</strong> \${s.command}</div>
+              <div class="schedule-details"><strong>Last Run:</strong> \${lastRun}</div>
+              <div class="schedule-details"><strong>Next Run:</strong> \${nextRun}</div>
+            </div>\`;
+          }).join('');
         }
 
         // Update timestamp

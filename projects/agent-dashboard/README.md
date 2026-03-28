@@ -5,11 +5,13 @@ Real-time observability dashboard for the autonomous agent system.
 ## Features
 
 - **Active Goals**: Shows current goals from `memory/goals.md`
+- **Tasks**: Displays in-progress, pending, and completed tasks from `memory/TASKS.md`
 - **Active Workers**: Displays running Claude CLI workers with their tasks and runtime
+- **Scheduled Tasks**: Shows cron-scheduled tasks from agent-scheduler service
 - **Recent Activity**: Last 20 entries from today's daily log
 - **Git Status**: Current branch and recent commits
 - **Decision Engine**: Status of the autonomous decision engine
-- **Auto-refresh**: Updates every 10 seconds
+- **Auto-refresh**: Updates every 5 seconds
 
 ## Quick Start
 
@@ -247,6 +249,57 @@ curl http://localhost:3001/api/workers | jq '.count'
 
 # Get worker IDs
 curl http://localhost:3001/api/workers | jq '.workers[].id'
+```
+
+### GET /api/schedules
+
+Returns scheduled tasks from the agent-scheduler service (http://localhost:3002). Gracefully handles scheduler service unavailability.
+
+**Response (when scheduler available):**
+```json
+{
+  "schedules": [
+    {
+      "id": 1,
+      "name": "Daily Backup",
+      "cron_expression": "0 2 * * *",
+      "command": "npm run backup",
+      "enabled": 1,
+      "last_run": 1774738800000,
+      "next_run": 1774825200000,
+      "created_at": 1774728800000
+    }
+  ],
+  "count": 1,
+  "available": true,
+  "timestamp": "2026-03-29T04:07:00.000Z"
+}
+```
+
+**Response (when scheduler unavailable):**
+```json
+{
+  "schedules": [],
+  "count": 0,
+  "available": false,
+  "error": "Scheduler service not available",
+  "timestamp": "2026-03-29T04:07:00.000Z"
+}
+```
+
+**Examples:**
+```bash
+# Get all scheduled tasks
+curl http://localhost:3001/api/schedules
+
+# Count scheduled tasks
+curl http://localhost:3001/api/schedules | jq '.count'
+
+# Get enabled schedules only
+curl http://localhost:3001/api/schedules | jq '.schedules[] | select(.enabled == 1)'
+
+# Check scheduler availability
+curl http://localhost:3001/api/schedules | jq '.available'
 ```
 
 ## Testing

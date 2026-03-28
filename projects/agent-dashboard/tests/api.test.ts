@@ -300,6 +300,61 @@ describe('Agent Dashboard API', () => {
     });
   });
 
+  describe('GET /api/schedules', () => {
+    it('should return schedules array with metadata', async () => {
+      const response = await request(app).get('/api/schedules');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('schedules');
+      expect(response.body).toHaveProperty('count');
+      expect(response.body).toHaveProperty('available');
+      expect(response.body).toHaveProperty('timestamp');
+      expect(Array.isArray(response.body.schedules)).toBe(true);
+      expect(typeof response.body.count).toBe('number');
+      expect(typeof response.body.available).toBe('boolean');
+    });
+
+    it('should handle scheduler service unavailable gracefully', async () => {
+      const response = await request(app).get('/api/schedules');
+
+      expect(response.status).toBe(200);
+      if (!response.body.available) {
+        expect(response.body.schedules).toEqual([]);
+        expect(response.body.count).toBe(0);
+        expect(response.body.error).toBe('Scheduler service not available');
+      }
+    });
+
+    it('should return valid schedule structure when available', async () => {
+      const response = await request(app).get('/api/schedules');
+
+      expect(response.status).toBe(200);
+      if (response.body.available && response.body.schedules.length > 0) {
+        const schedule = response.body.schedules[0];
+        expect(schedule).toHaveProperty('id');
+        expect(schedule).toHaveProperty('name');
+        expect(schedule).toHaveProperty('cron_expression');
+        expect(schedule).toHaveProperty('command');
+        expect(schedule).toHaveProperty('enabled');
+      }
+    });
+
+    it('should return valid ISO timestamp', async () => {
+      const response = await request(app).get('/api/schedules');
+
+      expect(response.body.timestamp).toBeDefined();
+      const timestamp = new Date(response.body.timestamp);
+      expect(timestamp.toString()).not.toBe('Invalid Date');
+    });
+
+    it('should return count matching schedules array length', async () => {
+      const response = await request(app).get('/api/schedules');
+
+      expect(response.status).toBe(200);
+      expect(response.body.count).toBe(response.body.schedules.length);
+    });
+  });
+
   describe('GET /', () => {
     it('should return HTML dashboard', async () => {
       const response = await request(app).get('/');
@@ -311,6 +366,7 @@ describe('Agent Dashboard API', () => {
       expect(response.text).toContain('/api/workers');
       expect(response.text).toContain('/api/goals');
       expect(response.text).toContain('/api/tasks');
+      expect(response.text).toContain('/api/schedules');
     });
 
     it('should include auto-refresh script', async () => {
@@ -318,6 +374,13 @@ describe('Agent Dashboard API', () => {
 
       expect(response.text).toContain('setInterval');
       expect(response.text).toContain('fetchAllData');
+    });
+
+    it('should include scheduled tasks section', async () => {
+      const response = await request(app).get('/');
+
+      expect(response.text).toContain('Scheduled Tasks');
+      expect(response.text).toContain('schedules-count');
     });
   });
 });
