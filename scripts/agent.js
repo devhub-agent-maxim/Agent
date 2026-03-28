@@ -38,6 +38,7 @@ const memory     = require('./lib/memory');
 const workers    = require('./lib/workers');
 const { decide } = require('./lib/decider');
 const scheduler  = require('./lib/scheduler');
+const scheduleManager = require('./lib/schedule-manager');
 const {
   parseTasks,
   addTask,
@@ -853,17 +854,19 @@ async function main() {
   log('Agent starting...');
   memory.log('Agent started');
 
-  // Register work loop (every 10 min, run one cycle immediately)
-  scheduler.schedule('work-loop', workLoop, WORK_INTERVAL_MS, { runImmediately: true });
-  log(`[Scheduler] Work loop registered — every ${WORK_INTERVAL_MS / 60000} min`);
+  // Register core agent tasks with schedule manager
+  // Uses hybrid approach: in-process execution + external persistence/monitoring
+  const registrationResult = await scheduleManager.registerAgentTasks({
+    workLoopFn: workLoop,
+    dailyBriefFn: dailyBrief,
+    nightlyConsolidationFn: nightlyConsolidation,
+  });
 
-  // Register nightly consolidation at 2:00 AM
-  scheduler.scheduleDaily('nightly', 2, 0, nightlyConsolidation);
-  log('[Scheduler] Nightly consolidation registered — daily at 02:00');
-
-  // Register 7 AM daily brief — GitHub commits + Jira + overnight summary
-  scheduler.scheduleDaily('daily-brief', 7, 0, dailyBrief);
-  log('[Scheduler] Daily brief registered — daily at 07:00');
+  if (registrationResult.mode === 'hybrid') {
+    log('[Scheduler] Mode: hybrid (in-process + external monitoring)');
+  } else {
+    log('[Scheduler] Mode: in-process only');
+  }
 
   // Register daily intel scraper at 8:00 AM
   scheduler.scheduleDaily('intel-scraper', 8, 0, async () => {
