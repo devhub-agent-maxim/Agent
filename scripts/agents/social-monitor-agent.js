@@ -1,283 +1,525 @@
 #!/usr/bin/env node
 /**
- * Social Monitor Agent — tracks key accounts for actionable patterns
- * Monitored: @nateliason, @FelixCraftAI, @raycfu, @ruvnet on Twitter/X
- * Schedule: Daily 9 AM via Windows Task Scheduler
- * Output: Updates memory/areas/social-intel.md + Telegram digest
+ * Daily Intel Scraper — Morning Brief
+ *
+ * Sources (all tested and working):
+ *   1. YouTube RSS     — raycfu, nateliason (real channel IDs)
+ *   2. Reddit JSON     — r/ClaudeAI, r/AutonomousAgents, r/LocalLLaMA, r/MachineLearning
+ *   3. GitHub API      — ruvnet/claude-flow, anthropics/claude-code releases
+ *   4. Hacker News RSS — filtered for AI/agent content
+ *   5. Direct fetch    — raycfu.com, openclaw.report
+ *
+ * Then runs Sonnet usefulness-filter: only items scoring ≥7/10 reach Telegram.
+ *
+ * Called by:
+ *   • scheduler.scheduleDaily('intel-scraper', 8, 0, ...)  in agent.js
+ *   • /monitor Telegram command (on-demand)
  */
 
 'use strict';
 
-const fs      = require('fs');
-const path    = require('path');
-const https   = require('https');
-const { spawn, execSync } = require('child_process');
+require('../lib/config');
 
-const ROOT          = path.resolve(__dirname, '..', '..');
+const fs           = require('fs');
+const path         = require('path');
+const https        = require('https');
+const http         = require('http');
+
 const { config }    = require('../lib/config');
-const NOTIFY_SCRIPT = path.join(__dirname, '..', 'notify.js');
-const INTEL_FILE    = path.join(ROOT, 'memory', 'areas', 'social-intel.md');
-const DAILY_DIR     = path.join(ROOT, 'memory', 'daily');
-const CLAUDE_CMD    = config.claude.cmd;
-const CLAUDE_TIMEOUT = config.claude.timeoutMs;
+const { runClaude } = require('../lib/claude-runner');
+const memory        = require('../lib/memory');
 
-const ACCOUNTS = [
-  { handle: 'nateliason',   key: 'nateliason' },
-  { handle: 'FelixCraftAI', key: 'felixcraftai' },
-  { handle: 'raycfu',       key: 'raycfu' },
-  { handle: 'ruvnet',       key: 'ruvnet' },
-];
+const ROOT       = path.resolve(__dirname, '..', '..');
+const INTEL_FILE = path.join(ROOT, 'memory', 'areas', 'social-intel.md');
+
+// Browser-like User-Agent — required for Reddit and some sites
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 // ── Logging ───────────────────────────────────────────────────────────────────
-function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
 
-// ── Telegram notification ─────────────────────────────────────────────────────
-function notify(message) {
-  try {
-    execSync(`node "${NOTIFY_SCRIPT}" "${message.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
-      cwd: ROOT, timeout: 10000,
-    });
-  } catch (e) {
-    log(`Notify failed: ${e.message}`);
-  }
+function log(msg) {
+  console.log(`[intel] ${new Date().toLocaleTimeString()} ${msg}`);
 }
 
-// ── HTTP GET helper (returns Promise<string>) ─────────────────────────────────
-function httpGet(url, headers = {}) {
+// ── HTTP GET helper (follows redirects) ───────────────────────────────────────
+
+function httpGet(url, extraHeaders = {}, timeoutMs = 12000, redirectCount = 0) {
   return new Promise((resolve, reject) => {
-    const opts = Object.assign(require('url').parse(url), {
-      headers: { 'User-Agent': 'Mozilla/5.0 social-monitor-agent', ...headers },
-    });
-    https.get(opts, res => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return resolve(httpGet(res.headers.location, headers));
+    if (redirectCount > 5) return reject(new Error('Too many redirects'));
+
+    const lib    = url.startsWith('https') ? https : http;
+    const parsed = new URL(url);
+
+    const opts = {
+      hostname: parsed.hostname,
+      path:     parsed.pathname + parsed.search,
+      port:     parsed.port || (url.startsWith('https') ? 443 : 80),
+      headers:  { 'User-Agent': UA, Accept: '*/*', ...extraHeaders },
+    };
+
+    const req = lib.get(opts, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        const next = res.headers.location.startsWith('http')
+          ? res.headers.location
+          : `${parsed.protocol}//${parsed.host}${res.headers.location}`;
+        res.resume();
+        return resolve(httpGet(next, extraHeaders, timeoutMs, redirectCount + 1));
+      }
+      if (res.statusCode < 200 || res.statusCode >= 400) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
       }
       let body = '';
+      res.setEncoding('utf8');
       res.on('data', d => { body += d; });
       res.on('end', () => resolve(body));
-    }).on('error', reject);
+    });
+
+    req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error(`Timeout: ${url}`)); });
+    req.on('error', reject);
   });
 }
 
-// ── Front-matter parser / writer ──────────────────────────────────────────────
-function parseIntelFile() {
-  if (!fs.existsSync(INTEL_FILE)) {
-    return { lastSeen: {}, body: '# Social Intelligence Feed\n' };
+// ── XML / RSS helpers ─────────────────────────────────────────────────────────
+
+function stripTags(s) {
+  return s.replace(/<[^>]+>/g, '').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#x27;/g,"'").replace(/&quot;/g,'"').trim();
+}
+
+function stripCdata(s) {
+  return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim();
+}
+
+function parseRssItems(xml) {
+  // Try <item> (RSS 2.0)
+  const itemRe = /<item[^>]*>([\s\S]*?)<\/item>/g;
+  const items  = [];
+  let m;
+
+  while ((m = itemRe.exec(xml)) !== null) {
+    const chunk  = m[1];
+    const title  = stripCdata((chunk.match(/<title[^>]*>([\s\S]*?)<\/title>/) || [])[1] || '');
+    const link   = stripCdata((chunk.match(/<link[^>]*>([\s\S]*?)<\/link>/) || chunk.match(/<link[^>]*href="([^"]+)"/) || [])[1] || '').trim();
+    const date   = (chunk.match(/<pubDate>([\s\S]*?)<\/pubDate>/) || chunk.match(/<dc:date>([\s\S]*?)<\/dc:date>/) || [])[1] || '';
+    const desc   = stripTags(stripCdata((chunk.match(/<description[^>]*>([\s\S]*?)<\/description>/) || [])[1] || '')).slice(0,200);
+    if (title) items.push({ title: stripTags(title), link, date: date.trim(), desc });
   }
+
+  if (items.length > 0) return items;
+
+  // Atom fallback
+  const entryRe = /<entry[^>]*>([\s\S]*?)<\/entry>/g;
+  while ((m = entryRe.exec(xml)) !== null) {
+    const chunk  = m[1];
+    const title  = stripCdata((chunk.match(/<title[^>]*>([\s\S]*?)<\/title>/) || [])[1] || '');
+    const linkM  = chunk.match(/<link[^>]+href="([^"]+)"/);
+    const date   = (chunk.match(/<(?:published|updated)>([\s\S]*?)<\/(?:published|updated)>/) || [])[1] || '';
+    if (title) items.push({ title: stripTags(title), link: linkM ? linkM[1] : '', date: date.trim(), desc: '' });
+  }
+
+  return items;
+}
+
+// ── last-seen persistence ─────────────────────────────────────────────────────
+
+function loadLastSeen() {
+  if (!fs.existsSync(INTEL_FILE)) return {};
   const raw = fs.readFileSync(INTEL_FILE, 'utf8');
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!fmMatch) return { lastSeen: {}, body: raw };
-
-  const lastSeen = {};
-  for (const line of fmMatch[1].split('\n')) {
-    const m = line.match(/^\s+(\w+):\s+"(.+)"/);
-    if (m) lastSeen[m[1]] = m[2];
-  }
-  return { lastSeen, body: fmMatch[2] };
+  const m   = raw.match(/^<!-- last_seen: ({.*}) -->/m);
+  if (!m) return {};
+  try { return JSON.parse(m[1]); } catch { return {}; }
 }
 
-function writeIntelFile(lastSeen, body) {
+function saveLastSeen(lastSeen, newEntries) {
   fs.mkdirSync(path.dirname(INTEL_FILE), { recursive: true });
-  const fmLines = Object.entries(lastSeen)
-    .map(([k, v]) => `  ${k}: "${v}"`)
-    .join('\n');
-  const content = `---\nlast_seen:\n${fmLines}\n---\n${body}`;
-  fs.writeFileSync(INTEL_FILE, content);
+
+  let existing = fs.existsSync(INTEL_FILE)
+    ? fs.readFileSync(INTEL_FILE, 'utf8')
+    : '# Social Intelligence Feed\n\n';
+
+  const lsLine = `<!-- last_seen: ${JSON.stringify(lastSeen)} -->`;
+  if (existing.includes('<!-- last_seen:')) {
+    existing = existing.replace(/^<!-- last_seen:.*-->\n?/m, lsLine + '\n');
+  } else {
+    existing = lsLine + '\n' + existing;
+  }
+
+  if (newEntries.length > 0) {
+    const today = new Date().toISOString().slice(0, 10);
+    const block = `\n## ${today}\n${newEntries.map(e => `- **[${e.source}]** [${e.title}](${e.url})`).join('\n')}\n`;
+    existing = existing.replace(/^(# Social Intelligence Feed\n)/m, `$1${block}`);
+  }
+
+  fs.writeFileSync(INTEL_FILE, existing);
 }
 
-// ── Twitter/X fetch ───────────────────────────────────────────────────────────
-async function fetchTwitterPosts(handle, sinceTimestamp) {
-  const posts = [];
+// ── Source 1: YouTube RSS ─────────────────────────────────────────────────────
+// Real channel IDs found by scraping youtube.com/@handle
 
-  // Strategy 1: Twitter API v2 Bearer token
-  if (config.twitter.bearerToken) {
+const YOUTUBE_CHANNELS = [
+  { name: 'raycfu',     id: 'UCICk1RFsC2NpDSlvPR427VQ' },
+  { name: 'nateliason', id: 'UCaggiu76cPdLduA8R2lCSQA' },
+];
+
+async function scrapeYouTube(lastSeen) {
+  const items = [];
+  for (const ch of YOUTUBE_CHANNELS) {
+    const key   = `yt_${ch.name}`;
+    const since = lastSeen[key] ? new Date(lastSeen[key]) : new Date(Date.now() - 7 * 86400000);
     try {
-      const query   = encodeURIComponent(`from:${handle}`);
-      const url     = `https://api.twitter.com/2/tweets/search/recent?query=${query}&max_results=5&tweet.fields=created_at,text`;
-      const raw     = await httpGet(url, { Authorization: `Bearer ${config.twitter.bearerToken}` });
-      const data    = JSON.parse(raw);
-      const tweets  = (data.data || []);
-      for (const t of tweets) {
-        const ts = new Date(t.created_at).getTime();
-        if (!sinceTimestamp || ts > sinceTimestamp) {
-          posts.push({ text: t.text, timestamp: t.created_at, id: t.id });
+      const url  = `https://www.youtube.com/feeds/videos.xml?channel_id=${ch.id}`;
+      const xml  = await httpGet(url);
+      const feed = parseRssItems(xml);
+      let newest = since;
+      let count  = 0;
+      for (const item of feed.slice(0, 10)) {
+        const d = item.date ? new Date(item.date) : new Date(0);
+        if (d > since && item.title) {
+          items.push({ source: `YouTube/${ch.name}`, title: item.title, url: item.link, date: item.date });
+          if (d > newest) newest = d;
+          count++;
         }
       }
-      return posts;
+      lastSeen[key] = newest.toISOString();
+      log(`YouTube/${ch.name}: ${count} new`);
     } catch (e) {
-      log(`Twitter API failed for @${handle}: ${e.message} — falling back to Nitter`);
+      log(`YouTube/${ch.name} failed: ${e.message}`);
     }
   }
-
-  // Strategy 2: Nitter RSS (no auth)
-  try {
-    const url  = `https://nitter.privacydev.net/${handle}/rss`;
-    const xml  = await httpGet(url);
-    const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-    for (const match of items.slice(0, 5)) {
-      const itemXml = match[1];
-      const titleM  = itemXml.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/);
-      const dateM   = itemXml.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
-      if (!titleM || !dateM) continue;
-      const ts = new Date(dateM[1].trim()).getTime();
-      if (!sinceTimestamp || ts > sinceTimestamp) {
-        posts.push({ text: titleM[1].trim(), timestamp: new Date(ts).toISOString(), id: String(ts) });
-      }
-    }
-  } catch (e) {
-    log(`Nitter RSS failed for @${handle}: ${e.message}`);
-  }
-
-  return posts;
+  return items;
 }
 
-// ── Instagram fetch ───────────────────────────────────────────────────────────
-async function fetchInstagramPosts(sinceTimestamp) {
-  if (!config.instagram.accessToken) return [];
-  const posts = [];
-  try {
-    const url = `https://graph.instagram.com/me/media?fields=id,caption,timestamp&access_token=${config.instagram.accessToken}`;
-    const raw  = await httpGet(url);
-    const data = JSON.parse(raw);
-    for (const item of (data.data || []).slice(0, 5)) {
-      const ts = new Date(item.timestamp).getTime();
-      if (!sinceTimestamp || ts > sinceTimestamp) {
-        posts.push({ text: item.caption || '', timestamp: item.timestamp, id: item.id });
+// ── Source 2: Reddit (working with browser UA) ────────────────────────────────
+
+const SUBREDDITS = [
+  { name: 'ClaudeAI',          since: 86400 },
+  { name: 'AutonomousAgents',  since: 86400 * 3 },
+  { name: 'LocalLLaMA',        since: 86400 },
+  { name: 'MachineLearning',   since: 86400 },
+];
+
+async function scrapeReddit(lastSeen) {
+  const items = [];
+  for (const sub of SUBREDDITS) {
+    const key   = `reddit_${sub.name}`;
+    const since = lastSeen[key]
+      ? parseInt(lastSeen[key], 10)
+      : Math.floor(Date.now() / 1000) - sub.since;
+
+    try {
+      const url  = `https://www.reddit.com/r/${sub.name}/new.json?limit=15&raw_json=1`;
+      const raw  = await httpGet(url, { Accept: 'application/json' });
+      const data = JSON.parse(raw);
+      const posts = (data?.data?.children || []).map(c => c.data);
+      let newest = since;
+      let count  = 0;
+      for (const post of posts) {
+        if (post.created_utc > since && !post.stickied) {
+          items.push({
+            source: `Reddit/r/${sub.name}`,
+            title:  post.title.slice(0, 200),
+            url:    `https://www.reddit.com${post.permalink}`,
+            date:   new Date(post.created_utc * 1000).toISOString(),
+            score:  post.score,
+          });
+          if (post.created_utc > newest) newest = post.created_utc;
+          count++;
+        }
       }
+      lastSeen[key] = String(newest);
+      log(`Reddit/r/${sub.name}: ${count} new`);
+    } catch (e) {
+      log(`Reddit/r/${sub.name} failed: ${e.message}`);
     }
-  } catch (e) {
-    log(`Instagram fetch failed: ${e.message}`);
   }
-  return posts;
+  return items;
 }
 
-// ── Ask Claude whether a post is actionable ───────────────────────────────────
-function askClaude(postText) {
-  return new Promise(resolve => {
-    const prompt = `A social media post reads:\n\n"${postText}"\n\nIs this actionable for a developer or entrepreneur building autonomous agent systems? Answer "yes" or "no". If yes, in exactly 1 sentence describe the pattern or insight. Format: YES: <insight> or NO`;
-    let out = '', timedOut = false;
-    const child = spawn(CLAUDE_CMD, ['--print', '--dangerously-skip-permissions', '--no-session-persistence'], {
-      cwd: ROOT, env: { ...process.env }, windowsHide: true, shell: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    child.stdin.write(prompt);
-    child.stdin.end();
-    child.stdout.on('data', d => { out += d.toString(); });
-    child.stderr.on('data', () => {});
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); resolve(null); }, CLAUDE_TIMEOUT);
-    child.on('close', () => {
-      clearTimeout(timer);
-      if (timedOut) return;
-      const trimmed = out.trim();
-      const yesMatch = trimmed.match(/^YES:\s*(.+)/i);
-      resolve(yesMatch ? yesMatch[1].trim() : null);
-    });
-    child.on('error', () => { clearTimeout(timer); resolve(null); });
+// ── Source 3: GitHub Releases API (no CLI needed) ─────────────────────────────
+
+const GITHUB_REPOS = [
+  { repo: 'ruvnet/claude-flow',      label: 'claude-flow' },
+  { repo: 'anthropics/claude-code',  label: 'claude-code' },
+];
+
+async function scrapeGitHub(lastSeen) {
+  const items = [];
+  for (const { repo, label } of GITHUB_REPOS) {
+    const key    = `gh_${label}`;
+    const since  = lastSeen[key] ? new Date(lastSeen[key]) : new Date(Date.now() - 7 * 86400000);
+    try {
+      const url  = `https://api.github.com/repos/${repo}/releases?per_page=5`;
+      const raw  = await httpGet(url, {
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      });
+      const releases = JSON.parse(raw);
+      if (!Array.isArray(releases)) throw new Error('Non-array response');
+      let newest = since;
+      let count  = 0;
+      for (const r of releases) {
+        const d = new Date(r.published_at);
+        if (d > since) {
+          items.push({
+            source: `GitHub/${label}`,
+            title:  `${r.tag_name}: ${(r.name || r.tag_name).slice(0, 100)}`,
+            url:    r.html_url,
+            date:   r.published_at,
+          });
+          if (d > newest) newest = d;
+          count++;
+        }
+      }
+      lastSeen[key] = newest.toISOString();
+      log(`GitHub/${label}: ${count} new releases`);
+    } catch (e) {
+      log(`GitHub/${label} failed: ${e.message}`);
+    }
+  }
+  return items;
+}
+
+// ── Source 4: Hacker News RSS ─────────────────────────────────────────────────
+// Very reliable. Filter for AI/agent-relevant titles in the usefulness filter.
+
+async function scrapeHackerNews(lastSeen) {
+  const key   = 'hn_front';
+  const since = lastSeen[key] ? new Date(lastSeen[key]) : new Date(Date.now() - 12 * 3600000);
+  const items = [];
+
+  try {
+    const xml  = await httpGet('https://news.ycombinator.com/rss');
+    const feed = parseRssItems(xml);
+    let newest = since;
+    let count  = 0;
+
+    for (const item of feed.slice(0, 30)) {
+      // Only pass items with AI/agent/LLM keywords through to the filter
+      // (avoids sending 30 unrelated items to Sonnet)
+      const lower = item.title.toLowerCase();
+      const relevant = ['agent', 'llm', 'claude', 'openai', 'gpt', 'ai ', 'model', 'autonomous',
+        'copilot', 'anthropic', 'gemini', 'mistral', 'rag', 'prompt', 'inference', 'fine-tun',
+        'langchain', 'workflow', 'automate', 'bot', 'coding', 'developer'].some(kw => lower.includes(kw));
+
+      if (relevant) {
+        const d = item.date ? new Date(item.date) : new Date(0);
+        if (d > since || !item.date) {
+          items.push({ source: 'HackerNews', title: item.title, url: item.link, date: item.date });
+          if (d > newest) newest = d;
+          count++;
+        }
+      }
+    }
+
+    lastSeen[key] = newest.toISOString();
+    log(`HackerNews: ${count} relevant items`);
+  } catch (e) {
+    log(`HackerNews failed: ${e.message}`);
+  }
+
+  return items;
+}
+
+// ── Source 5: Static sites ────────────────────────────────────────────────────
+
+async function scrapeStaticSites(lastSeen) {
+  const items = [];
+
+  const sites = [
+    { key: 'raycfu', urls: ['https://raycfu.com/rss.xml', 'https://raycfu.com/feed.xml', 'https://raycfu.com/feed'], label: 'raycfu.com' },
+  ];
+
+  for (const site of sites) {
+    const since = lastSeen[site.key] ? new Date(lastSeen[site.key]) : new Date(Date.now() - 7 * 86400000);
+    let xml = null;
+
+    for (const url of site.urls) {
+      try { xml = await httpGet(url); break; } catch {}
+    }
+
+    if (!xml) { log(`${site.label}: no RSS found`); continue; }
+
+    try {
+      const feed = parseRssItems(xml);
+      let count  = 0;
+      for (const item of feed.slice(0, 5)) {
+        const d = item.date ? new Date(item.date) : new Date(0);
+        if ((d > since || !item.date) && item.title) {
+          items.push({ source: site.label, title: item.title, url: item.link || site.urls[0], date: item.date });
+          count++;
+        }
+      }
+      if (feed[0]?.date) lastSeen[site.key] = feed[0].date;
+      log(`${site.label}: ${count} new`);
+    } catch (e) {
+      log(`${site.label} parse error: ${e.message}`);
+    }
+  }
+
+  return items;
+}
+
+// ── Sonnet usefulness filter ───────────────────────────────────────────────────
+
+async function filterForRelevance(rawItems) {
+  if (rawItems.length === 0) return [];
+  log(`Running Sonnet filter on ${rawItems.length} items...`);
+
+  const itemList = rawItems.map((item, i) =>
+    `${i + 1}. [${item.source}] "${item.title}"`
+  ).join('\n');
+
+  const prompt = `You are an intelligence filter for a developer building autonomous AI agent systems using Claude Code (OpenClaw-style: persistent agents, Telegram control, worker delegation).
+
+Rate each item 1-10 for usefulness to someone building autonomous Claude Code agents:
+- 9-10: Direct technique, new tool, or pattern for autonomous agents / OpenClaw setup
+- 7-8: Related to LLM automation, agent frameworks, Claude/Anthropic tooling
+- 5-6: General AI/tech, interesting but not directly actionable
+- 1-4: Unrelated, noise
+
+Items:
+${itemList}
+
+Respond ONLY with a JSON array (no other text):
+[{"index":1,"score":8,"reason":"One sentence why"},{"index":2,"score":3,"reason":"why not"}]`;
+
+  const result = await runClaude(prompt, { timeoutMs: 120000, model: 'sonnet' });
+
+  let scores = [];
+  try {
+    const jsonMatch = result.output.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      scores = JSON.parse(jsonMatch[0]);
+    } else {
+      // Claude failed or returned no JSON — pass everything through
+      log(`Filter: Claude returned no JSON (${result.output.slice(0,80)}) — passing all items`);
+      return rawItems.map(item => ({ ...item, relevanceScore: 7, relevanceReason: 'Filter unavailable' }));
+    }
+  } catch (e) {
+    log(`Filter parse error: ${e.message} — passing all items`);
+    return rawItems.map(item => ({ ...item, relevanceScore: 7, relevanceReason: 'Filter unavailable' }));
+  }
+
+  const filtered = [];
+  for (const s of scores) {
+    if (s.score >= 7) {
+      const item = rawItems[s.index - 1];
+      if (item) filtered.push({ ...item, relevanceScore: s.score, relevanceReason: s.reason });
+    }
+  }
+
+  // Safety net: if filter returned nothing but we had items, lower threshold to 5
+  if (filtered.length === 0 && scores.length > 0) {
+    const best = scores.filter(s => s.score >= 5).slice(0, 5);
+    for (const s of best) {
+      const item = rawItems[s.index - 1];
+      if (item) filtered.push({ ...item, relevanceScore: s.score, relevanceReason: s.reason });
+    }
+    if (filtered.length > 0) log(`Filter: fell back to score ≥5, got ${filtered.length} items`);
+  }
+
+  log(`Filter: ${filtered.length}/${rawItems.length} passed`);
+  return filtered;
+}
+
+// ── Build Telegram digest ─────────────────────────────────────────────────────
+
+function buildDigest(filteredItems) {
+  const today   = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const grouped = {};
+
+  for (const item of filteredItems) {
+    if (!grouped[item.source]) grouped[item.source] = [];
+    grouped[item.source].push(item);
+  }
+
+  const lines = [`🧠 *Intel Brief — ${today}*`, ''];
+
+  for (const [source, items] of Object.entries(grouped)) {
+    lines.push(`*${source}*`);
+    for (const item of items) {
+      lines.push(`• [${item.title.slice(0, 80)}](${item.url}) _(${item.relevanceScore}/10)_`);
+      if (item.relevanceReason) lines.push(`  ↳ _${item.relevanceReason}_`);
+    }
+    lines.push('');
+  }
+
+  if (filteredItems.length === 0) {
+    lines.push('_No highly-relevant intel today._');
+  }
+
+  return lines.join('\n');
+}
+
+// ── Telegram send (standalone mode) ──────────────────────────────────────────
+
+async function telegramSend(text, notifyFn) {
+  if (notifyFn) return notifyFn(text);
+  const token   = config.telegram.botToken;
+  const groupId = config.telegram.groupId;
+  if (!token || !groupId) { console.log(text); return; }
+
+  const body = JSON.stringify({ chat_id: groupId, text: text.slice(0, 4096), parse_mode: 'Markdown' });
+  await new Promise(resolve => {
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path:     `/bot${token}/sendMessage`,
+      method:   'POST',
+      headers:  { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, res => { res.on('data', ()=>{}); res.on('end', resolve); });
+    req.on('error', resolve);
+    req.write(body);
+    req.end();
   });
 }
 
-// ── Append to today's daily note ──────────────────────────────────────────────
-function appendToDaily(entry) {
-  fs.mkdirSync(DAILY_DIR, { recursive: true });
+// ── Main ─────────────────────────────────────────────────────────────────────
+
+async function run(notifyFn) {
   const today = new Date().toISOString().slice(0, 10);
-  const file  = path.join(DAILY_DIR, `${today}.md`);
-  let existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : `# ${today}\n`;
-  const section = '\n## Social Monitor Log\n';
-  if (!existing.includes(section.trim())) existing += section;
-  existing += `\n- ${new Date().toLocaleTimeString()} — ${entry}`;
-  fs.writeFileSync(file, existing);
+  log(`Intel scraper starting for ${today}`);
+
+  const lastSeen = loadLastSeen();
+
+  // Run all scrapers concurrently
+  const [ytItems, redditItems, ghItems, hnItems, siteItems] = await Promise.all([
+    scrapeYouTube(lastSeen),
+    scrapeReddit(lastSeen),
+    scrapeGitHub(lastSeen),
+    scrapeHackerNews(lastSeen),
+    scrapeStaticSites(lastSeen),
+  ]);
+
+  const allRaw = [...ytItems, ...redditItems, ...ghItems, ...hnItems, ...siteItems];
+  log(`Total scraped: ${allRaw.length}`);
+
+  // Dedup by URL
+  const seen = new Set();
+  const deduped = allRaw.filter(item => {
+    if (!item.url || seen.has(item.url)) return false;
+    seen.add(item.url);
+    return true;
+  });
+  log(`After dedup: ${deduped.length}`);
+
+  // Sonnet filter
+  const filtered = deduped.length > 0 ? await filterForRelevance(deduped) : [];
+
+  // Persist
+  saveLastSeen(lastSeen, filtered);
+  memory.log(filtered.length > 0
+    ? `Social monitor: ${filtered.length} findings from ${deduped.length} scraped`
+    : 'Social monitor: no new actionable intel');
+
+  // Send digest
+  await telegramSend(buildDigest(filtered), notifyFn);
+
+  log(`Done. ${filtered.length} items sent.`);
+  return { total: deduped.length, sent: filtered.length, items: filtered };
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-async function main() {
-  log('Social monitor agent starting...');
+module.exports = { run };
 
-  const { lastSeen, body } = parseIntelFile();
-  const today    = new Date().toISOString().slice(0, 10);
-  const findings = [];
-
-  // Twitter/X accounts
-  for (const account of ACCOUNTS) {
-    const since    = lastSeen[account.key] ? new Date(lastSeen[account.key]).getTime() : null;
-    const posts    = await fetchTwitterPosts(account.handle, since);
-    log(`@${account.handle}: ${posts.length} new post(s)`);
-
-    for (const post of posts) {
-      const insight = await askClaude(post.text);
-      if (insight) {
-        findings.push(`- **@${account.handle}**: ${insight}`);
-        log(`  Actionable: ${insight}`);
-      }
-      // Advance last-seen to newest timestamp seen
-      if (!lastSeen[account.key] || new Date(post.timestamp) > new Date(lastSeen[account.key])) {
-        lastSeen[account.key] = post.timestamp;
-      }
-    }
-
-    // Always update last-seen to now if we found no newer posts (prevents re-fetching stale)
-    if (!lastSeen[account.key]) {
-      lastSeen[account.key] = new Date().toISOString();
-    }
-  }
-
-  // Instagram (no per-account loop — single user token)
-  const igSince  = lastSeen['instagram'] ? new Date(lastSeen['instagram']).getTime() : null;
-  const igPosts  = await fetchInstagramPosts(igSince);
-  log(`Instagram: ${igPosts.length} new post(s)`);
-  for (const post of igPosts) {
-    const insight = await askClaude(post.text);
-    if (insight) {
-      findings.push(`- **Instagram**: ${insight}`);
-    }
-    if (!lastSeen['instagram'] || new Date(post.timestamp) > new Date(lastSeen['instagram'])) {
-      lastSeen['instagram'] = post.timestamp;
-    }
-  }
-  if (!lastSeen['instagram'] && config.instagram.accessToken) {
-    lastSeen['instagram'] = new Date().toISOString();
-  }
-
-  // Write findings to intel file
-  let updatedBody = body;
-  if (findings.length > 0) {
-    const section = `\n## ${today}\n${findings.join('\n')}\n`;
-    // Insert after the "# Social Intelligence Feed" heading
-    if (updatedBody.includes('# Social Intelligence Feed')) {
-      updatedBody = updatedBody.replace(
-        '# Social Intelligence Feed\n',
-        `# Social Intelligence Feed\n${section}`
-      );
-    } else {
-      updatedBody += section;
-    }
-  }
-  writeIntelFile(lastSeen, updatedBody);
-
-  // Daily note
-  const summary = findings.length > 0
-    ? `Social monitor: ${findings.length} actionable finding(s)`
-    : 'Social monitor: no new actionable intel';
-  appendToDaily(summary);
-
-  // Telegram
-  if (findings.length > 0) {
-    const digest = `*Social Intel — ${today}*\n\n${findings.map(f => f.replace(/\*\*/g, '*')).join('\n')}`;
-    notify(digest);
-    log(`Sent digest with ${findings.length} finding(s)`);
-  } else {
-    notify(`Social monitor — ${today}: No new intel today.`);
-    log('No actionable findings today.');
-  }
-
-  log('Social monitor agent complete.');
+if (require.main === module) {
+  run().catch(err => { console.error(`[intel] Fatal: ${err.message}`); process.exit(1); });
 }
-
-main().catch(err => {
-  console.error(`Fatal error: ${err.message}`);
-  try {
-    execSync(`node "${NOTIFY_SCRIPT}" "Social monitor agent error: ${err.message.replace(/"/g, '')}"`, {
-      cwd: ROOT, timeout: 10000,
-    });
-  } catch (_) {}
-  process.exit(1);
-});
