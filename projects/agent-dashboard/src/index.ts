@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
 import { getWeeklyMetrics, formatDuration } from './lib/analytics';
+import matter from 'gray-matter';
 
 const app = express();
 const PORT = 3001;
@@ -133,6 +134,82 @@ function readTasks(): { inProgress: string[]; pending: string[]; completed: stri
   }
 }
 
+// Helper: Read memory directory structure recursively
+interface MemoryFile {
+  name: string;
+  path: string;
+  type: string;
+  description?: string;
+  frontmatter?: Record<string, any>;
+}
+
+interface MemoryDirectory {
+  name: string;
+  path: string;
+  files: MemoryFile[];
+  subdirectories: MemoryDirectory[];
+}
+
+function readMemoryStructure(dirPath: string, relativePath: string = ''): MemoryDirectory {
+  const fullPath = path.join(ROOT, 'memory', dirPath);
+  const dirName = path.basename(dirPath) || 'memory';
+
+  const result: MemoryDirectory = {
+    name: dirName,
+    path: relativePath || 'memory',
+    files: [],
+    subdirectories: [],
+  };
+
+  try {
+    const entries = fs.readdirSync(fullPath, { withFileTypes: true });
+
+    // Process files
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.md')) {
+        const filePath = path.join(fullPath, entry.name);
+        const fileRelativePath = path.join(relativePath || 'memory', entry.name);
+
+        try {
+          const content = fs.readFileSync(filePath, 'utf8');
+          const parsed = matter(content);
+
+          const fileInfo: MemoryFile = {
+            name: entry.name,
+            path: fileRelativePath,
+            type: parsed.data.type || 'unknown',
+            description: parsed.data.description || parsed.data.name || undefined,
+            frontmatter: Object.keys(parsed.data).length > 0 ? parsed.data : undefined,
+          };
+
+          result.files.push(fileInfo);
+        } catch (err) {
+          // If file can't be read, add basic info
+          result.files.push({
+            name: entry.name,
+            path: fileRelativePath,
+            type: 'unknown',
+          });
+        }
+      }
+    }
+
+    // Process subdirectories
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        const subDirPath = path.join(dirPath, entry.name);
+        const subRelativePath = path.join(relativePath || 'memory', entry.name);
+        const subDir = readMemoryStructure(subDirPath, subRelativePath);
+        result.subdirectories.push(subDir);
+      }
+    }
+
+    return result;
+  } catch (err) {
+    return result;
+  }
+}
+
 // API endpoints
 app.get('/api/status', (req: Request, res: Response) => {
   const status = {
@@ -231,6 +308,42 @@ app.get('/api/schedules', async (req: Request, res: Response) => {
       count: 0,
       available: false,
       error: 'Scheduler service not available',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+app.get('/api/memory', (req: Request, res: Response) => {
+  try {
+    const memoryStructure = readMemoryStructure('');
+
+    // Calculate statistics
+    const countByType: Record<string, number> = {};
+    let totalFiles = 0;
+
+    function countFiles(dir: MemoryDirectory) {
+      for (const file of dir.files) {
+        totalFiles++;
+        countByType[file.type] = (countByType[file.type] || 0) + 1;
+      }
+      for (const subDir of dir.subdirectories) {
+        countFiles(subDir);
+      }
+    }
+
+    countFiles(memoryStructure);
+
+    res.json({
+      structure: memoryStructure,
+      statistics: {
+        totalFiles,
+        byType: countByType,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to read memory structure',
       timestamp: new Date().toISOString(),
     });
   }
@@ -490,6 +603,44 @@ app.get('/', (req: Request, res: Response) => {
       <div id="schedules"></div>
     </div>
 
+    <!-- Memory Section -->
+    <div class="card" style="margin-top: 20px;">
+      <h2>🧠 Memory Structure</h2>
+      <div class="grid">
+        <div class="metric-card">
+          <div class="metric-label">Total Files</div>
+          <div class="metric-value" id="memory-total">-</div>
+          <div class="metric-sublabel" id="memory-unknown">- unknown</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">User Memories</div>
+          <div class="metric-value" id="memory-user">-</div>
+          <div class="metric-sublabel">User preferences & context</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Feedback</div>
+          <div class="metric-value" id="memory-feedback">-</div>
+          <div class="metric-sublabel">Learned behaviors</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Project Memories</div>
+          <div class="metric-value" id="memory-project">-</div>
+          <div class="metric-sublabel">Project context</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">References</div>
+          <div class="metric-value" id="memory-reference">-</div>
+          <div class="metric-sublabel">External pointers</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Patterns</div>
+          <div class="metric-value" id="memory-pattern">-</div>
+          <div class="metric-sublabel">Reusable patterns</div>
+        </div>
+      </div>
+      <div id="memory-tree" style="margin-top: 20px; max-height: 400px; overflow-y: auto; background: #0d1117; padding: 12px; border-radius: 4px;"></div>
+    </div>
+
     <div class="timestamp" id="timestamp"></div>
   </div>
 
@@ -502,22 +653,24 @@ app.get('/', (req: Request, res: Response) => {
 
       try {
         // Fetch all endpoints in parallel
-        const [activityRes, workersRes, goalsRes, tasksRes, schedulesRes, metricsRes] = await Promise.all([
+        const [activityRes, workersRes, goalsRes, tasksRes, schedulesRes, metricsRes, memoryRes] = await Promise.all([
           fetch('/api/recent-activity?count=10'),
           fetch('/api/workers'),
           fetch('/api/goals'),
           fetch('/api/tasks'),
           fetch('/api/schedules'),
-          fetch('/api/metrics?days=7')
+          fetch('/api/metrics?days=7'),
+          fetch('/api/memory')
         ]);
 
-        const [activity, workers, goals, tasks, schedules, metrics] = await Promise.all([
+        const [activity, workers, goals, tasks, schedules, metrics, memory] = await Promise.all([
           activityRes.json(),
           workersRes.json(),
           goalsRes.json(),
           tasksRes.json(),
           schedulesRes.json(),
-          metricsRes.json()
+          metricsRes.json(),
+          memoryRes.json()
         ]);
 
         // Metrics Summary
@@ -666,6 +819,76 @@ app.get('/', (req: Request, res: Response) => {
               <div class="schedule-details"><strong>Next Run:</strong> \${nextRun}</div>
             </div>\`;
           }).join('');
+        }
+
+        // Memory Structure
+        if (memory.statistics) {
+          const stats = memory.statistics;
+          document.getElementById('memory-total').textContent = stats.totalFiles.toString();
+          document.getElementById('memory-unknown').textContent = \`\${stats.byType.unknown || 0} unknown\`;
+          document.getElementById('memory-user').textContent = (stats.byType.user || 0).toString();
+          document.getElementById('memory-feedback').textContent = (stats.byType.feedback || 0).toString();
+          document.getElementById('memory-project').textContent = (stats.byType.project || 0).toString();
+          document.getElementById('memory-reference').textContent = (stats.byType.reference || 0).toString();
+          document.getElementById('memory-pattern').textContent = (stats.byType.pattern || 0).toString();
+
+          // Render memory tree
+          const memoryTreeDiv = document.getElementById('memory-tree');
+          function renderDirectory(dir, depth = 0) {
+            const indent = depth * 20;
+            let html = '';
+
+            if (dir.subdirectories && dir.subdirectories.length > 0) {
+              for (const subdir of dir.subdirectories) {
+                html += \`<div style="margin-left: \${indent}px; margin-top: 8px;">
+                  <strong style="color: #58a6ff;">📁 \${subdir.name}</strong>
+                  <span style="color: #7d8590; font-size: 12px; margin-left: 8px;">
+                    (\${subdir.files.length} files)
+                  </span>
+                </div>\`;
+
+                if (subdir.files.length > 0) {
+                  for (const file of subdir.files) {
+                    const typeColor = file.type === 'unknown' ? '#6e7681' :
+                                      file.type === 'user' ? '#3fb950' :
+                                      file.type === 'feedback' ? '#d29922' :
+                                      file.type === 'project' ? '#58a6ff' :
+                                      file.type === 'reference' ? '#a371f7' :
+                                      file.type === 'pattern' ? '#f85149' : '#8b949e';
+
+                    html += \`<div style="margin-left: \${indent + 20}px; padding: 4px 0; font-size: 13px;">
+                      <span style="color: \${typeColor};">📄</span>
+                      <span style="color: #c9d1d9;">\${file.name}</span>
+                      \${file.description ? \`<span style="color: #7d8590; font-size: 12px; margin-left: 8px;">– \${file.description}</span>\` : ''}
+                    </div>\`;
+                  }
+                }
+
+                html += renderDirectory(subdir, depth + 1);
+              }
+            }
+
+            return html;
+          }
+
+          if (memory.structure) {
+            let treeHtml = '';
+
+            // Root level files
+            if (memory.structure.files.length > 0) {
+              treeHtml += '<div style="margin-bottom: 12px;">';
+              for (const file of memory.structure.files) {
+                treeHtml += \`<div style="padding: 4px 0; font-size: 13px;">
+                  <span style="color: #8b949e;">📄</span>
+                  <span style="color: #c9d1d9;">\${file.name}</span>
+                </div>\`;
+              }
+              treeHtml += '</div>';
+            }
+
+            treeHtml += renderDirectory(memory.structure);
+            memoryTreeDiv.innerHTML = treeHtml || '<div class="empty-state">No memory files found</div>';
+          }
         }
 
         // Update timestamp

@@ -9,6 +9,7 @@ Real-time observability dashboard for the autonomous agent system.
 - **Tasks**: Displays in-progress, pending, and completed tasks from `memory/TASKS.md`
 - **Active Workers**: Displays running Claude CLI workers with their tasks and runtime
 - **Scheduled Tasks**: Shows cron-scheduled tasks from agent-scheduler service
+- **Memory Structure**: Hierarchical view of memory/ directory with frontmatter parsing and file counts by type
 - **Recent Activity**: Last 20 entries from today's daily log
 - **Git Status**: Current branch and recent commits
 - **Decision Engine**: Status of the autonomous decision engine
@@ -301,6 +302,121 @@ curl http://localhost:3001/api/schedules | jq '.schedules[] | select(.enabled ==
 
 # Check scheduler availability
 curl http://localhost:3001/api/schedules | jq '.available'
+```
+
+### GET /api/memory
+
+Returns hierarchical structure of the memory/ directory with frontmatter parsing and statistics. Recursively walks all subdirectories and parses YAML frontmatter from .md files.
+
+**Response:**
+```json
+{
+  "structure": {
+    "name": "memory",
+    "path": "memory",
+    "files": [
+      {
+        "name": "goals.md",
+        "path": "memory/goals.md",
+        "type": "unknown",
+        "description": null,
+        "frontmatter": null
+      }
+    ],
+    "subdirectories": [
+      {
+        "name": "patterns",
+        "path": "memory/patterns",
+        "files": [
+          {
+            "name": "stack-default.md",
+            "path": "memory/patterns/stack-default.md",
+            "type": "pattern",
+            "description": "Default tech stack preferences",
+            "frontmatter": {
+              "name": "stack-default",
+              "description": "Default tech stack preferences",
+              "type": "pattern"
+            }
+          }
+        ],
+        "subdirectories": []
+      },
+      {
+        "name": "user",
+        "path": "memory/user",
+        "files": [
+          {
+            "name": "preferences.md",
+            "path": "memory/user/preferences.md",
+            "type": "user",
+            "description": "User preferences and expertise",
+            "frontmatter": {
+              "name": "preferences",
+              "description": "User preferences and expertise",
+              "type": "user"
+            }
+          }
+        ],
+        "subdirectories": []
+      }
+    ]
+  },
+  "statistics": {
+    "totalFiles": 8,
+    "byType": {
+      "unknown": 2,
+      "pattern": 2,
+      "user": 1,
+      "feedback": 1,
+      "project": 2
+    }
+  },
+  "timestamp": "2026-03-29T07:50:00.000Z"
+}
+```
+
+**Frontmatter Format:**
+
+Memory files can include YAML frontmatter with the following fields:
+```yaml
+---
+name: memory-name
+description: One-line description for filtering and search
+type: user | feedback | project | reference | pattern
+---
+```
+
+**Memory Types:**
+- `user`: User role, preferences, and expertise context
+- `feedback`: Learned behaviors and guidance from user interactions
+- `project`: Project-specific context and decisions
+- `reference`: Pointers to external resources
+- `pattern`: Reusable patterns and approaches
+- `unknown`: Files without frontmatter or unrecognized type
+
+**Examples:**
+```bash
+# Get full memory structure
+curl http://localhost:3001/api/memory
+
+# Get total file count
+curl http://localhost:3001/api/memory | jq '.statistics.totalFiles'
+
+# Get breakdown by type
+curl http://localhost:3001/api/memory | jq '.statistics.byType'
+
+# List all user memories
+curl http://localhost:3001/api/memory | jq '.structure.subdirectories[] | select(.name == "user") | .files[]'
+
+# Find all pattern files
+curl http://localhost:3001/api/memory | jq '.. | select(.type? == "pattern")'
+
+# Count files in each subdirectory
+curl http://localhost:3001/api/memory | jq '.structure.subdirectories[] | {name, fileCount: .files | length}'
+
+# Get all descriptions from memory files
+curl http://localhost:3001/api/memory | jq '.. | .description? // empty | select(. != null)'
 ```
 
 ### GET /api/metrics

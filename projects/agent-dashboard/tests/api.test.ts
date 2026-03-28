@@ -355,6 +355,88 @@ describe('Agent Dashboard API', () => {
     });
   });
 
+  describe('GET /api/memory', () => {
+    it('should return memory structure with statistics', async () => {
+      const response = await request(app).get('/api/memory');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('structure');
+      expect(response.body).toHaveProperty('statistics');
+      expect(response.body).toHaveProperty('timestamp');
+    });
+
+    it('should return nested directory structure', async () => {
+      const response = await request(app).get('/api/memory');
+
+      expect(response.status).toBe(200);
+      expect(response.body.structure).toHaveProperty('name');
+      expect(response.body.structure).toHaveProperty('path');
+      expect(response.body.structure).toHaveProperty('files');
+      expect(response.body.structure).toHaveProperty('subdirectories');
+      expect(Array.isArray(response.body.structure.files)).toBe(true);
+      expect(Array.isArray(response.body.structure.subdirectories)).toBe(true);
+    });
+
+    it('should parse frontmatter from markdown files', async () => {
+      const response = await request(app).get('/api/memory');
+
+      expect(response.status).toBe(200);
+
+      // Check that files have proper structure
+      const hasFiles = response.body.structure.files.length > 0 ||
+        response.body.structure.subdirectories.some((dir: any) => dir.files.length > 0);
+
+      if (hasFiles) {
+        // Find first file
+        let firstFile;
+        if (response.body.structure.files.length > 0) {
+          firstFile = response.body.structure.files[0];
+        } else {
+          const dirWithFiles = response.body.structure.subdirectories.find((dir: any) => dir.files.length > 0);
+          if (dirWithFiles) {
+            firstFile = dirWithFiles.files[0];
+          }
+        }
+
+        if (firstFile) {
+          expect(firstFile).toHaveProperty('name');
+          expect(firstFile).toHaveProperty('path');
+          expect(firstFile).toHaveProperty('type');
+          expect(firstFile.name).toMatch(/\.md$/);
+        }
+      }
+    });
+
+    it('should filter markdown files only', async () => {
+      const response = await request(app).get('/api/memory');
+
+      expect(response.status).toBe(200);
+
+      // Check all files are .md files
+      function checkFiles(structure: any) {
+        for (const file of structure.files) {
+          expect(file.name).toMatch(/\.md$/);
+        }
+        for (const subdir of structure.subdirectories) {
+          checkFiles(subdir);
+        }
+      }
+
+      checkFiles(response.body.structure);
+    });
+
+    it('should return statistics with file counts by type', async () => {
+      const response = await request(app).get('/api/memory');
+
+      expect(response.status).toBe(200);
+      expect(response.body.statistics).toHaveProperty('totalFiles');
+      expect(response.body.statistics).toHaveProperty('byType');
+      expect(typeof response.body.statistics.totalFiles).toBe('number');
+      expect(typeof response.body.statistics.byType).toBe('object');
+      expect(response.body.statistics.totalFiles).toBeGreaterThanOrEqual(0);
+    });
+  });
+
   describe('GET /', () => {
     it('should return HTML dashboard', async () => {
       const response = await request(app).get('/');
