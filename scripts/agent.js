@@ -642,6 +642,92 @@ async function workLoop() {
   workers.spawnWorker(workerId, decision.prompt);
 }
 
+// ── 7 AM daily brief — GitHub + Jira + overnight summary ─────────────────────
+
+async function dailyBrief() {
+  log('[Brief] Generating 7 AM daily brief...');
+  memory.log('Daily brief started (7 AM)');
+
+  const gitOps = require('./lib/git-ops');
+  const jira   = require('./lib/jira');
+  const today  = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  // 1. GitHub: commits since yesterday midnight
+  const { execSync } = require('child_process');
+  let commits = '';
+  try {
+    const since = new Date(); since.setDate(since.getDate() - 1); since.setHours(0,0,0,0);
+    commits = execSync(
+      `git log --oneline --since="${since.toISOString()}" --pretty=format:"• %s (%h)"`,
+      { cwd: ROOT, encoding: 'utf8', stdio: 'pipe' }
+    ).trim();
+  } catch {}
+
+  // 2. Jira: open tickets
+  let jiraLines = '';
+  if (jira.isConfigured()) {
+    const issues = await jira.getOpenIssues(8).catch(() => []);
+    if (issues.length > 0) {
+      jiraLines = issues.map(i => `• \`${i.key}\` [${i.status}] ${i.summary.slice(0, 70)}`).join('\n');
+    }
+  }
+
+  // 3. Overnight work log (all entries from last 12h)
+  const dailyLog = memory.readToday();
+  const logEntries = (dailyLog || '').split('\n')
+    .filter(l => l.startsWith('- ') && !l.includes('Work loop tick') && !l.includes('Work loop: waiting'))
+    .slice(-20)
+    .join('\n');
+
+  // 4. Ask Claude to summarize
+  let summaryText = '';
+  try {
+    const prompt = [
+      'Generate a concise morning brief for an autonomous developer agent.',
+      '',
+      `Date: ${today}`,
+      '',
+      `Overnight activity log:\n${logEntries || '(no activity)'}`,
+      '',
+      `GitHub commits made overnight:\n${commits || '(none)'}`,
+      '',
+      `Open Jira tickets:\n${jiraLines || '(Jira not configured)'}`,
+      '',
+      'Write a 3-5 bullet point summary of what was accomplished overnight and what is in progress.',
+      'Be specific about what was built/fixed. Keep it concise for a morning Telegram message.',
+      'Output ONLY the bullet points, no extra text.',
+    ].join('\n');
+    const result = await runClaude(prompt, { timeoutMs: 30000, model: 'sonnet' });
+    summaryText = result.output?.trim() || '';
+  } catch {}
+
+  // 5. Build and send the brief
+  const lines = [
+    `🌅 *Daily Brief — ${today}*`,
+    '',
+    '📋 *What happened overnight:*',
+    summaryText || logEntries.slice(0, 600) || '_(agent was idle — no tasks to work on)_',
+    '',
+  ];
+
+  if (commits) {
+    lines.push('🔀 *GitHub commits:*', commits, '');
+  }
+
+  if (jiraLines) {
+    lines.push('🎫 *Open Jira tickets:*', jiraLines, '');
+  }
+
+  lines.push(
+    '⚙️ *Agent continues running* — work loop every 10 min',
+    '_Add tasks: `task: description` · Add goals: `goal: description`_',
+  );
+
+  await notify(lines.join('\n'));
+  memory.log('Daily brief sent to Telegram');
+  log('[Brief] Done.');
+}
+
 // ── Nightly consolidation — runs at 2:00 AM ───────────────────────────────────
 
 async function nightlyConsolidation() {
@@ -771,6 +857,10 @@ async function main() {
   scheduler.scheduleDaily('nightly', 2, 0, nightlyConsolidation);
   log('[Scheduler] Nightly consolidation registered — daily at 02:00');
 
+  // Register 7 AM daily brief — GitHub commits + Jira + overnight summary
+  scheduler.scheduleDaily('daily-brief', 7, 0, dailyBrief);
+  log('[Scheduler] Daily brief registered — daily at 07:00');
+
   // Register daily intel scraper at 8:00 AM
   scheduler.scheduleDaily('intel-scraper', 8, 0, async () => {
     log('[Intel] Morning brief starting...');
@@ -815,9 +905,10 @@ async function main() {
     : `Set TELEGRAM_NEW_PROJECT_THREAD_ID in .env to enable idea cards`;
   await notify(
     `✅ *Agent online* — ${new Date().toLocaleString()}\n` +
-    `Work loop: every 10 min\n` +
-    `Nightly: 02:00 AM · Intel: 08:00 AM\n` +
-    `Intel digest → Social Monitor topic (thread ${THREAD_SOCIAL_MONITOR})\n` +
+    `⏱ Work loop: every 10 min (autonomous, no goals needed)\n` +
+    `🌅 Daily brief: 07:00 AM — GitHub + Jira + overnight summary\n` +
+    `🧠 Nightly: 02:00 AM — consolidation\n` +
+    `📡 Intel: 08:00 AM — curated digest → Social Monitor\n` +
     `${newProjectNote}\n` +
     `Dashboard: http://localhost:${dashPort}/?token=${dashToken}\n` +
     `Say \`/help\` for commands.`
