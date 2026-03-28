@@ -88,7 +88,6 @@ export const errorHandler = (
   }
 
   // Format error response
-  // Use 'error' field for the message to maintain backward compatibility with existing tests
   const errorMessage = isOperational ? err.message : 'An unexpected error occurred';
 
   const errorResponse: ErrorResponse = {

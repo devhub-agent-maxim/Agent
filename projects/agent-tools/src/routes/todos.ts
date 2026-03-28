@@ -3,8 +3,10 @@ import { CreateTodoInput, UpdateTodoInput } from '../models/todo';
 import { todoRepository } from '../db/todos-repository';
 import { authenticateApiKey } from '../middleware/auth';
 import { todoRateLimiter } from '../middleware/rate-limiter';
-import { ValidationError, NotFoundError } from '../middleware/error-handler';
+import { NotFoundError } from '../middleware/error-handler';
 import { asyncHandler } from '../middleware/async-handler';
+import { validate } from '../middleware/validate';
+import { createTodoSchema, updateTodoSchema } from '../validation/todo-schemas';
 
 const router = Router();
 
@@ -14,58 +16,11 @@ router.use(authenticateApiKey);
 // Apply rate limiting to all routes
 router.use(todoRateLimiter);
 
-// Validation helpers
-const validateCreateInput = (body: any): void => {
-  if (!body.title || typeof body.title !== 'string') {
-    throw new ValidationError('Title is required and must be a string');
-  }
-  if (body.title.trim().length === 0) {
-    throw new ValidationError('Title cannot be empty');
-  }
-  if (body.title.length > 200) {
-    throw new ValidationError('Title cannot exceed 200 characters');
-  }
-  if (body.description !== undefined && typeof body.description !== 'string') {
-    throw new ValidationError('Description must be a string');
-  }
-  if (body.description && body.description.length > 1000) {
-    throw new ValidationError('Description cannot exceed 1000 characters');
-  }
-};
-
-const validateUpdateInput = (body: any): void => {
-  if (Object.keys(body).length === 0) {
-    throw new ValidationError('At least one field must be provided for update');
-  }
-  if (body.title !== undefined) {
-    if (typeof body.title !== 'string') {
-      throw new ValidationError('Title must be a string');
-    }
-    if (body.title.trim().length === 0) {
-      throw new ValidationError('Title cannot be empty');
-    }
-    if (body.title.length > 200) {
-      throw new ValidationError('Title cannot exceed 200 characters');
-    }
-  }
-  if (body.description !== undefined && typeof body.description !== 'string') {
-    throw new ValidationError('Description must be a string');
-  }
-  if (body.description && body.description.length > 1000) {
-    throw new ValidationError('Description cannot exceed 1000 characters');
-  }
-  if (body.completed !== undefined && typeof body.completed !== 'boolean') {
-    throw new ValidationError('Completed must be a boolean');
-  }
-};
-
 // POST /todos - Create a new todo
-router.post('/', asyncHandler(async (req: Request, res: Response) => {
-  validateCreateInput(req.body);
-
+router.post('/', validate(createTodoSchema), asyncHandler(async (req: Request, res: Response) => {
   const input: CreateTodoInput = {
-    title: req.body.title.trim(),
-    description: req.body.description?.trim()
+    title: req.body.title,
+    description: req.body.description
   };
 
   const todo = todoRepository.create(input);
@@ -91,21 +46,14 @@ router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
 }));
 
 // PUT /todos/:id - Update a todo
-router.put('/:id', asyncHandler(async (req: Request, res: Response) => {
+router.put('/:id', validate(updateTodoSchema), asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
 
-  validateUpdateInput(req.body);
-
-  const input: UpdateTodoInput = {};
-  if (req.body.title !== undefined) {
-    input.title = req.body.title.trim();
-  }
-  if (req.body.description !== undefined) {
-    input.description = req.body.description.trim();
-  }
-  if (req.body.completed !== undefined) {
-    input.completed = req.body.completed;
-  }
+  const input: UpdateTodoInput = {
+    ...(req.body.title !== undefined && { title: req.body.title }),
+    ...(req.body.description !== undefined && { description: req.body.description }),
+    ...(req.body.completed !== undefined && { completed: req.body.completed })
+  };
 
   const todo = todoRepository.update(id, input);
 
