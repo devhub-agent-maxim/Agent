@@ -142,6 +142,67 @@ describe('Agent Dashboard API', () => {
     });
   });
 
+  describe('GET /api/recent-activity', () => {
+    it('should return activity array with metadata', async () => {
+      const response = await request(app).get('/api/recent-activity');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('activity');
+      expect(response.body).toHaveProperty('count');
+      expect(response.body).toHaveProperty('timestamp');
+      expect(Array.isArray(response.body.activity)).toBe(true);
+      expect(typeof response.body.count).toBe('number');
+    });
+
+    it('should accept count query parameter', async () => {
+      const response = await request(app).get('/api/recent-activity?count=10');
+
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.body.activity)).toBe(true);
+      expect(response.body.activity.length).toBeLessThanOrEqual(10);
+    });
+
+    it('should default to 20 entries when count not specified', async () => {
+      const response = await request(app).get('/api/recent-activity');
+
+      expect(response.status).toBe(200);
+      expect(response.body.activity.length).toBeLessThanOrEqual(20);
+    });
+  });
+
+  describe('GET /api/workers', () => {
+    it('should return workers array with metadata', async () => {
+      const response = await request(app).get('/api/workers');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('workers');
+      expect(response.body).toHaveProperty('count');
+      expect(response.body).toHaveProperty('timestamp');
+      expect(Array.isArray(response.body.workers)).toBe(true);
+      expect(typeof response.body.count).toBe('number');
+    });
+
+    it('should return valid worker structure when workers exist', async () => {
+      const response = await request(app).get('/api/workers');
+
+      expect(response.status).toBe(200);
+      if (response.body.workers.length > 0) {
+        const worker = response.body.workers[0];
+        expect(worker).toHaveProperty('id');
+        expect(worker).toHaveProperty('task');
+        expect(worker).toHaveProperty('runningMs');
+      }
+    });
+
+    it('should return valid ISO timestamp', async () => {
+      const response = await request(app).get('/api/workers');
+
+      expect(response.body.timestamp).toBeDefined();
+      const timestamp = new Date(response.body.timestamp);
+      expect(timestamp.toString()).not.toBe('Invalid Date');
+    });
+  });
+
   describe('GET /', () => {
     it('should return HTML dashboard', async () => {
       const response = await request(app).get('/');

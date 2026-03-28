@@ -141,6 +141,27 @@ app.get('/api/goals', (req: Request, res: Response) => {
   });
 });
 
+app.get('/api/recent-activity', (req: Request, res: Response) => {
+  const count = parseInt(req.query.count as string) || 20;
+  const logs = readDailyLog(count);
+
+  res.json({
+    activity: logs,
+    count: logs.length,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/workers', (req: Request, res: Response) => {
+  const workers = getActiveWorkers();
+
+  res.json({
+    workers,
+    count: workers.length,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Web UI
 app.get('/', (req: Request, res: Response) => {
   res.send(`<!DOCTYPE html>

@@ -139,6 +139,71 @@ curl http://localhost:3001/api/goals
 curl http://localhost:3001/api/goals | jq '.summary'
 ```
 
+### GET /api/recent-activity
+
+Returns recent activity log entries from today's daily note (similar to /api/logs but with 'activity' key for consistency).
+
+**Query Parameters:**
+- `count` (optional, default: 20): Number of activity entries to return
+
+**Response:**
+```json
+{
+  "activity": [
+    "- 4:07:43 am — Spawning worker: AUTO-1774728463698",
+    "- 4:06:58 am — Work loop tick — 0 workers running",
+    "- 3:59:36 am — Work loop tick — 1 workers running"
+  ],
+  "count": 3,
+  "timestamp": "2026-03-29T04:07:00.000Z"
+}
+```
+
+**Examples:**
+```bash
+# Get last 20 activity entries (default)
+curl http://localhost:3001/api/recent-activity
+
+# Get last 10 activity entries
+curl http://localhost:3001/api/recent-activity?count=10
+```
+
+### GET /api/workers
+
+Returns currently active Claude CLI workers with their tasks and runtime.
+
+**Response:**
+```json
+{
+  "workers": [
+    {
+      "id": "AUTO-1774728463698",
+      "task": "Integrate agent-dashboard with real data sources",
+      "runningMs": 45230
+    },
+    {
+      "id": "AUTO-1774728500000",
+      "task": "Add TODO API tests",
+      "runningMs": 12100
+    }
+  ],
+  "count": 2,
+  "timestamp": "2026-03-29T04:07:00.000Z"
+}
+```
+
+**Examples:**
+```bash
+# Get active workers
+curl http://localhost:3001/api/workers
+
+# Count active workers
+curl http://localhost:3001/api/workers | jq '.count'
+
+# Get worker IDs
+curl http://localhost:3001/api/workers | jq '.workers[].id'
+```
+
 ## Testing
 
 ```bash
