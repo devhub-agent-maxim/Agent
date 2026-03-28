@@ -499,6 +499,266 @@ The application includes comprehensive shutdown tests in `tests/shutdown.test.ts
 - Error handling during shutdown
 - Exit code correctness
 
+## Docker
+
+The application is fully containerized with Docker for easy deployment and consistent environments across development and production.
+
+### Quick Start with Docker
+
+```bash
+# Build the Docker image
+docker build -t agent-tools .
+
+# Run with docker-compose (recommended)
+docker-compose up -d
+
+# Or run directly
+docker run -d \
+  -p 3000:3000 \
+  -e API_KEY=your-secret-key \
+  -e LOG_LEVEL=info \
+  -v $(pwd)/data:/app/data \
+  --name agent-tools-api \
+  agent-tools
+```
+
+### Docker Configuration
+
+#### Multi-Stage Build
+
+The Dockerfile uses a multi-stage build for optimal image size and security:
+
+**Build Stage:**
+- Uses `node:18-alpine` base image
+- Installs build dependencies for native modules (better-sqlite3)
+- Compiles TypeScript to JavaScript
+- Image size: ~500MB (not shipped)
+
+**Production Stage:**
+- Uses `node:18-alpine` base image
+- Installs only production dependencies
+- Copies pre-built files from build stage
+- Runs as non-root user (`nodejs:1001`)
+- Final image size: ~150MB
+
+#### Environment Variables
+
+Configure the container using environment variables in `.env` or `docker-compose.yml`:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NODE_ENV` | No | `development` | Environment mode (development, production) |
+| `PORT` | No | `3000` | Server port (always 3000 inside container) |
+| `API_KEY` | **Yes** | - | API authentication key (use strong random value) |
+| `CORS_ALLOWED_ORIGINS` | No | localhost variants | Comma-separated list of allowed CORS origins |
+| `LOG_LEVEL` | No | `info` | Logging verbosity (error, warn, info, debug) |
+
+**Example `.env` file:**
+```env
+NODE_ENV=production
+API_KEY=super-secret-key-change-this-in-production
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://dashboard.example.com
+LOG_LEVEL=info
+```
+
+#### Volume Mounts
+
+The docker-compose configuration includes persistent volumes:
+
+| Mount | Purpose | Path (Host) | Path (Container) |
+|-------|---------|-------------|------------------|
+| Database | Persist SQLite database across container restarts | `./data` | `/app/data` |
+| Logs | Optional log file persistence | `./logs` | `/app/logs` |
+
+**Important:** Ensure the `data/` directory has proper permissions for the container user (UID 1001).
+
+#### Health Check
+
+The container includes a built-in health check that verifies the application is responsive:
+
+- **Endpoint:** `GET /health`
+- **Interval:** 30 seconds
+- **Timeout:** 3 seconds
+- **Start Period:** 5 seconds (grace period during startup)
+- **Retries:** 3 attempts before marking unhealthy
+
+**Check health status:**
+```bash
+docker inspect --format='{{.State.Health.Status}}' agent-tools-api
+```
+
+### Docker Commands
+
+**Build the image:**
+```bash
+docker build -t agent-tools:latest .
+```
+
+**Run the container:**
+```bash
+docker run -d \
+  -p 3000:3000 \
+  -e API_KEY=your-secret-key \
+  -v $(pwd)/data:/app/data \
+  --name agent-tools-api \
+  agent-tools:latest
+```
+
+**Using docker-compose:**
+```bash
+# Start services in detached mode
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+
+# Rebuild and restart
+docker-compose up -d --build
+```
+
+**View container logs:**
+```bash
+docker logs -f agent-tools-api
+```
+
+**Execute commands inside container:**
+```bash
+# Open shell
+docker exec -it agent-tools-api sh
+
+# Check database
+docker exec -it agent-tools-api ls -la /app/data
+```
+
+**Stop and remove container:**
+```bash
+docker stop agent-tools-api
+docker rm agent-tools-api
+```
+
+### Production Deployment
+
+**Security Best Practices:**
+
+1. **Use secrets management** - Never hardcode API keys in docker-compose.yml
+   ```bash
+   docker secret create api_key ./api_key.txt
+   ```
+
+2. **Read-only filesystem** - Add security constraints
+   ```yaml
+   security_opt:
+     - no-new-privileges:true
+   read_only: true
+   tmpfs:
+     - /tmp
+   ```
+
+3. **Resource limits** - Prevent resource exhaustion
+   ```yaml
+   deploy:
+     resources:
+       limits:
+         cpus: '1'
+         memory: 512M
+       reservations:
+         cpus: '0.5'
+         memory: 256M
+   ```
+
+4. **Network isolation** - Use custom networks
+   ```yaml
+   networks:
+     agent-tools-network:
+       driver: bridge
+       internal: false
+   ```
+
+**Container Orchestration:**
+
+The application is designed for container orchestration platforms:
+
+- **Kubernetes**: Use the Dockerfile with a Deployment manifest
+- **Docker Swarm**: Use docker-compose.yml with swarm mode
+- **Amazon ECS/Fargate**: Compatible with ECS task definitions
+- **Google Cloud Run**: Works with Cloud Run deployments
+
+**Example Kubernetes Deployment:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-tools
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: agent-tools
+  template:
+    metadata:
+      labels:
+        app: agent-tools
+    spec:
+      containers:
+      - name: agent-tools
+        image: agent-tools:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: agent-tools-secrets
+              key: api-key
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+```
+
+### Troubleshooting
+
+**Container won't start:**
+```bash
+# Check container logs
+docker logs agent-tools-api
+
+# Check health status
+docker inspect agent-tools-api | grep Health -A 10
+```
+
+**Permission errors on data directory:**
+```bash
+# Fix permissions for container user (UID 1001)
+sudo chown -R 1001:1001 ./data
+```
+
+**Database locked errors:**
+```bash
+# Ensure only one container is accessing the database
+docker ps | grep agent-tools
+
+# Stop all containers using the database
+docker stop $(docker ps -q --filter name=agent-tools)
+```
+
+**Port already in use:**
+```bash
+# Change the host port in docker-compose.yml or use different port
+docker run -p 3001:3000 ... agent-tools
+```
+
 ## Database
 
 The application uses SQLite for persistence. The database file is stored at `data/agent-tools.db` and is automatically created on first run.

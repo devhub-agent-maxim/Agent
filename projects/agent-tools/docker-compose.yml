@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  agent-tools:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agent-tools-api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      # Server configuration
+      - NODE_ENV=${NODE_ENV:-development}
+      - PORT=3000
+
+      # Authentication
+      - API_KEY=${API_KEY:-your-secure-api-key-here}
+
+      # CORS configuration
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      # Persist SQLite database
+      - ./data:/app/data
+      # Persist logs (optional)
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    networks:
+      - agent-tools-network
+
+networks:
+  agent-tools-network:
+    driver: bridge
