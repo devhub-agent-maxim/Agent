@@ -440,4 +440,14 @@ describe('TODO API', () => {
       expect(fetchedTodo2.body.completed).toBe(false);
     });
   });
+
+  describe('API Documentation', () => {
+    it('should serve Swagger UI at /api-docs', async () => {
+      const response = await request(app)
+        .get('/api-docs/')
+        .expect(200);
+
+      expect(response.text).toContain('swagger-ui');
+    });
+  });
 });
