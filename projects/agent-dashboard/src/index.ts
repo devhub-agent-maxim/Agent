@@ -102,7 +102,7 @@ function getDecisionEngineStatus(): { available: boolean; message: string } {
   }
 }
 
-// API endpoint
+// API endpoints
 app.get('/api/status', (req: Request, res: Response) => {
   const status = {
     goals: readGoals(),
@@ -114,6 +114,31 @@ app.get('/api/status', (req: Request, res: Response) => {
   };
 
   res.json(status);
+});
+
+app.get('/api/logs', (req: Request, res: Response) => {
+  const count = parseInt(req.query.count as string) || 20;
+  const logs = readDailyLog(count);
+
+  res.json({
+    logs,
+    count: logs.length,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/goals', (req: Request, res: Response) => {
+  const goals = readGoals();
+
+  res.json({
+    goals,
+    summary: {
+      active: goals.active.length,
+      waiting: goals.waiting.length,
+      completed: goals.completed.length,
+    },
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Web UI

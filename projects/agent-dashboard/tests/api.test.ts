@@ -65,6 +65,83 @@ describe('Agent Dashboard API', () => {
     });
   });
 
+  describe('GET /api/logs', () => {
+    it('should return logs array with metadata', async () => {
+      const response = await request(app).get('/api/logs');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('logs');
+      expect(response.body).toHaveProperty('count');
+      expect(response.body).toHaveProperty('timestamp');
+      expect(Array.isArray(response.body.logs)).toBe(true);
+      expect(typeof response.body.count).toBe('number');
+    });
+
+    it('should accept count query parameter', async () => {
+      const response = await request(app).get('/api/logs?count=5');
+
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.body.logs)).toBe(true);
+      expect(response.body.logs.length).toBeLessThanOrEqual(5);
+    });
+
+    it('should default to 20 logs when count not specified', async () => {
+      const response = await request(app).get('/api/logs');
+
+      expect(response.status).toBe(200);
+      expect(response.body.logs.length).toBeLessThanOrEqual(20);
+    });
+
+    it('should return valid ISO timestamp', async () => {
+      const response = await request(app).get('/api/logs');
+
+      expect(response.body.timestamp).toBeDefined();
+      const timestamp = new Date(response.body.timestamp);
+      expect(timestamp.toString()).not.toBe('Invalid Date');
+    });
+  });
+
+  describe('GET /api/goals', () => {
+    it('should return goals object with metadata', async () => {
+      const response = await request(app).get('/api/goals');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('goals');
+      expect(response.body).toHaveProperty('summary');
+      expect(response.body).toHaveProperty('timestamp');
+    });
+
+    it('should return goals with active, waiting, and completed arrays', async () => {
+      const response = await request(app).get('/api/goals');
+
+      expect(response.body.goals).toHaveProperty('active');
+      expect(response.body.goals).toHaveProperty('waiting');
+      expect(response.body.goals).toHaveProperty('completed');
+      expect(Array.isArray(response.body.goals.active)).toBe(true);
+      expect(Array.isArray(response.body.goals.waiting)).toBe(true);
+      expect(Array.isArray(response.body.goals.completed)).toBe(true);
+    });
+
+    it('should return summary with counts', async () => {
+      const response = await request(app).get('/api/goals');
+
+      expect(response.body.summary).toHaveProperty('active');
+      expect(response.body.summary).toHaveProperty('waiting');
+      expect(response.body.summary).toHaveProperty('completed');
+      expect(typeof response.body.summary.active).toBe('number');
+      expect(typeof response.body.summary.waiting).toBe('number');
+      expect(typeof response.body.summary.completed).toBe('number');
+    });
+
+    it('should return valid ISO timestamp', async () => {
+      const response = await request(app).get('/api/goals');
+
+      expect(response.body.timestamp).toBeDefined();
+      const timestamp = new Date(response.body.timestamp);
+      expect(timestamp.toString()).not.toBe('Invalid Date');
+    });
+  });
+
   describe('GET /', () => {
     it('should return HTML dashboard', async () => {
       const response = await request(app).get('/');

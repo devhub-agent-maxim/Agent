@@ -29,29 +29,114 @@ npm run dev
 
 The dashboard will be available at http://localhost:3001
 
-## API Endpoint
+## API Endpoints
 
-**GET /api/status** - Returns JSON with all dashboard data:
+### GET /api/status
 
+Returns comprehensive dashboard data including goals, workers, logs, git status, and decision engine status.
+
+**Response:**
 ```json
 {
   "goals": {
-    "active": [],
+    "active": ["Goal 1", "Goal 2"],
     "waiting": [],
-    "completed": []
+    "completed": ["Goal 3", "Goal 4"]
   },
-  "workers": [],
-  "recentLogs": [],
+  "workers": [
+    {
+      "id": "AUTO-1234567890",
+      "task": "Task description",
+      "runningMs": 15000
+    }
+  ],
+  "recentLogs": [
+    "- 4:07:43 am — Spawning worker: AUTO-1774728463698",
+    "- 4:06:58 am — Work loop tick — 0 workers running"
+  ],
   "git": {
-    "branch": "main",
-    "commits": []
+    "branch": "claude/serene-lamarr",
+    "commits": [
+      "d92ee48 docs: log agent-dashboard completion in daily notes",
+      "daaee1e feat: add observability dashboard"
+    ]
   },
   "decisionEngine": {
     "available": true,
     "message": "Decision engine ready"
   },
-  "timestamp": "2026-03-29T03:40:00.000Z"
+  "timestamp": "2026-03-29T04:07:00.000Z"
 }
+```
+
+### GET /api/logs
+
+Returns recent log entries from today's daily note.
+
+**Query Parameters:**
+- `count` (optional, default: 20): Number of log entries to return
+
+**Response:**
+```json
+{
+  "logs": [
+    "- 4:07:43 am — Spawning worker: AUTO-1774728463698",
+    "- 4:06:58 am — Work loop tick — 0 workers running",
+    "- 3:59:36 am — Work loop tick — 1 workers running"
+  ],
+  "count": 3,
+  "timestamp": "2026-03-29T04:07:00.000Z"
+}
+```
+
+**Examples:**
+```bash
+# Get last 20 logs (default)
+curl http://localhost:3001/api/logs
+
+# Get last 50 logs
+curl http://localhost:3001/api/logs?count=50
+
+# Get last 5 logs
+curl http://localhost:3001/api/logs?count=5
+```
+
+### GET /api/goals
+
+Returns parsed goals from memory/goals.md with summary counts.
+
+**Response:**
+```json
+{
+  "goals": {
+    "active": [
+      "Goal 1: Active Task — Description",
+      "Goal 2: Another Active Task"
+    ],
+    "waiting": [
+      "Goal 3: Waiting Task — Description"
+    ],
+    "completed": [
+      "Goal 4: Completed Task ✅",
+      "Goal 5: Another Completed Task ✅"
+    ]
+  },
+  "summary": {
+    "active": 2,
+    "waiting": 1,
+    "completed": 2
+  },
+  "timestamp": "2026-03-29T04:07:00.000Z"
+}
+```
+
+**Examples:**
+```bash
+# Get all goals with counts
+curl http://localhost:3001/api/goals
+
+# Parse response with jq
+curl http://localhost:3001/api/goals | jq '.summary'
 ```
 
 ## Testing
