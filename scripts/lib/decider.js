@@ -24,6 +24,7 @@ const { parseTasks, markInProgress } = require('./task-queue');
 const { runClaude } = require('./claude-runner');
 const memory        = require('./memory');
 const gitOps        = require('./git-ops');
+const { config }    = require('./config');
 
 const ROOT       = path.resolve(__dirname, '..', '..');
 const TASKS_FILE = path.join(ROOT, 'memory', 'TASKS.md');
@@ -189,6 +190,9 @@ async function decide(activeWorkerList) {
   // This is the OpenClaw-style autonomous mode.
   // Gather full context and ask Claude what to work on next.
 
+  // Log Claude CLI being used (for debugging)
+  memory.log(`Decider: using Claude CLI at ${config.claude.cmd}`);
+
   const context = gatherContext();
 
   const systemCtx = memory.buildSystemContext();
@@ -229,9 +233,22 @@ async function decide(activeWorkerList) {
     // Sonnet is fast enough for decision-making
     const result = await runClaude(decisionPrompt, { timeoutMs: 90000, model: 'sonnet' });
 
+    // Log the result for debugging
+    if (!result.success) {
+      memory.log(`Decider: runClaude failed — ${result.output?.slice(0, 200) || 'no output'}`);
+      return {
+        action: 'wait',
+        taskId: null,
+        prompt: null,
+        reason: `Decision engine error: ${result.output?.slice(0, 100) || 'runClaude failed'}`,
+      };
+    }
+
+    // Check if we got structured output
     if (result.structured &&
         (result.structured.action === 'work' || result.structured.action === 'wait') &&
         (result.structured.action !== 'work' || result.structured.prompt)) {
+      memory.log(`Decider: autonomous decision — ${result.structured.action} — ${result.structured.reason?.slice(0, 100)}`);
       return {
         action: result.structured.action,
         taskId: null,
@@ -242,28 +259,45 @@ async function decide(activeWorkerList) {
 
     // If structured parse failed but output looks like a task, try to use it
     if (result.output && result.output.length > 50) {
-      // Try extracting JSON anywhere in output
-      const jsonMatch = result.output.match(/\{[^{}]*"action"\s*:\s*"work"[^{}]*"prompt"[^{}]*\}/s);
+      // Try extracting JSON anywhere in output (more flexible pattern)
+      const jsonMatch = result.output.match(/\{[\s\S]*?"action"\s*:\s*"(work|wait)"[\s\S]*?\}/);
       if (jsonMatch) {
         try {
           const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed.prompt) {
+          if (parsed.action === 'work' && parsed.prompt) {
+            memory.log(`Decider: parsed JSON from output — work — ${parsed.reason?.slice(0, 100)}`);
             return { action: 'work', taskId: null, prompt: parsed.prompt, reason: parsed.reason || 'Autonomous decision' };
+          } else if (parsed.action === 'wait') {
+            memory.log(`Decider: parsed JSON from output — wait — ${parsed.reason?.slice(0, 100)}`);
+            return { action: 'wait', taskId: null, prompt: null, reason: parsed.reason || 'Agent decided to wait' };
           }
-        } catch {}
+        } catch (parseErr) {
+          memory.log(`Decider: JSON parse failed — ${parseErr.message}`);
+        }
       }
     }
-  } catch (err) {
-    memory.log(`Decider: error — ${err.message}`);
-  }
 
-  // ── 5. Default: wait ───────────────────────────────────────────────────────
-  return {
-    action: 'wait',
-    taskId: null,
-    prompt: null,
-    reason: 'No actionable work identified (decision engine unavailable)',
-  };
+    // Log when we can't parse the output
+    memory.log(`Decider: could not parse output (${result.output?.length || 0} chars) — structured=${!!result.structured}, first 200: ${result.output?.slice(0, 200)}`);
+
+    // If we got output but couldn't parse it, that's still valuable information
+    return {
+      action: 'wait',
+      taskId: null,
+      prompt: null,
+      reason: `Could not parse decision output (got ${result.output?.length || 0} chars)`,
+    };
+
+  } catch (err) {
+    // Log full error details
+    memory.log(`Decider: exception — ${err.message} — ${err.stack?.split('\n')[1]?.trim()}`);
+    return {
+      action: 'wait',
+      taskId: null,
+      prompt: null,
+      reason: `Decision engine exception: ${err.message}`,
+    };
+  }
 }
 
 module.exports = { decide };
