@@ -9,10 +9,14 @@ const todos_1 = __importDefault(require("./routes/todos"));
 const swagger_1 = require("./swagger");
 const database_1 = require("./db/database");
 const error_handler_1 = require("./middleware/error-handler");
+const request_logger_1 = require("./middleware/request-logger");
+const logger_1 = require("./utils/logger");
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
 // Initialize database
 (0, database_1.initializeDatabase)();
+// Request logging middleware - must be before other middleware
+app.use(request_logger_1.requestLogger);
 app.use(express_1.default.json());
 // Swagger documentation
 app.use('/api-docs', swagger_ui_express_1.default.serve, swagger_ui_express_1.default.setup(swagger_1.swaggerSpec));
@@ -28,7 +32,7 @@ app.use('/todos', todos_1.default);
 app.use(error_handler_1.errorHandler);
 if (require.main === module) {
     app.listen(PORT, () => {
-        console.log(`Server running on port ${PORT}`);
+        logger_1.logger.info(`Server running on port ${PORT}`);
     });
 }
 exports.default = app;

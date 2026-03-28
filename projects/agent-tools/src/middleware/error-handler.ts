@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ErrorResponse } from '../types/errors';
+import { logger } from '../utils/logger';
 
 /**
  * Base application error class
@@ -64,15 +65,25 @@ export const errorHandler = (
   const statusCode = err instanceof AppError ? err.statusCode : 500;
   const isOperational = err instanceof AppError ? err.isOperational : false;
 
-  // Log error details
+  // Log error details using winston logger
   if (!isOperational || statusCode >= 500) {
-    console.error('Error:', {
+    logger.error('Error occurred', {
       message: err.message,
       stack: err.stack,
       statusCode,
       path: req.path,
       method: req.method,
+      requestId: req.requestId,
       timestamp: new Date().toISOString()
+    });
+  } else {
+    // Log operational errors at warn level
+    logger.warn('Operational error', {
+      message: err.message,
+      statusCode,
+      path: req.path,
+      method: req.method,
+      requestId: req.requestId
     });
   }
 
