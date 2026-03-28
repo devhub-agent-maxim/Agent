@@ -9,11 +9,12 @@ A TypeScript + Express REST API for productivity tools with SQLite persistence a
 - ✅ Comprehensive input validation with Joi
 - ✅ Bearer token authentication
 - ✅ Rate limiting (100 requests per 15 minutes per IP)
+- ✅ CORS with configurable allowed origins
 - ✅ Structured logging with Winston
 - ✅ Request tracking with unique request IDs
 - ✅ Centralized error handling
 - ✅ OpenAPI/Swagger documentation
-- ✅ Comprehensive test coverage (105+ tests)
+- ✅ Comprehensive test coverage (110+ tests)
 - ✅ TypeScript with strict type checking
 
 ## Getting Started
@@ -37,6 +38,9 @@ PORT=3000
 
 # Optional: Log level - error, warn, info, debug (default: info)
 LOG_LEVEL=info
+
+# Optional: Comma-separated list of allowed CORS origins (default: localhost variants in dev)
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://dashboard.example.com
 ```
 
 **Important**: Never commit your `.env` file to version control. API keys are sensitive credentials.
@@ -218,6 +222,48 @@ All `/todos/*` endpoints are protected by rate limiting to prevent abuse and ens
 - Implement exponential backoff when receiving 429 responses
 - Cache responses when possible to reduce API calls
 - Distribute requests evenly throughout the time window
+
+### CORS Configuration
+
+Cross-Origin Resource Sharing (CORS) is configured to allow secure browser-based access from trusted origins.
+
+**Default Allowed Origins (Development):**
+- `http://localhost:3000`
+- `http://localhost:3001`
+- `http://127.0.0.1:3000`
+- `http://127.0.0.1:3001`
+
+**Production Configuration:**
+
+For production deployments, specify allowed origins via the `CORS_ALLOWED_ORIGINS` environment variable:
+
+```env
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://dashboard.example.com,https://admin.example.com
+```
+
+**CORS Features:**
+- ✅ Credentials support (cookies, authorization headers)
+- ✅ Preflight caching (24 hours)
+- ✅ Standard HTTP methods (GET, POST, PUT, DELETE, OPTIONS)
+- ✅ Common request headers (Content-Type, Authorization, etc.)
+- ✅ Exposed custom headers (X-Request-Id)
+- ✅ Requests without origin allowed (mobile apps, curl, Postman)
+
+**CORS Error Response:**
+
+When a request is made from a non-allowed origin, the browser will block the response:
+
+```
+Access to fetch at 'http://localhost:3000/todos' from origin 'https://evil.example.com'
+has been blocked by CORS policy: Origin not allowed by CORS policy
+```
+
+**Security Best Practices:**
+- Never use wildcard (`*`) origins in production
+- Always specify exact origin URLs including protocol and port
+- Keep the allowed origins list minimal - only include trusted domains
+- Regularly audit and remove unused origins
+- Use HTTPS origins in production
 
 ## Logging
 

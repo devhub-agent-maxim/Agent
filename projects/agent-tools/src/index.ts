@@ -5,6 +5,7 @@ import { swaggerSpec } from './swagger';
 import { initializeDatabase } from './db/database';
 import { errorHandler } from './middleware/error-handler';
 import { requestLogger } from './middleware/request-logger';
+import { corsMiddleware } from './middleware/cors-config';
 import { logger } from './utils/logger';
 
 const app = express();
@@ -15,6 +16,9 @@ initializeDatabase();
 
 // Request logging middleware - must be before other middleware
 app.use(requestLogger);
+
+// CORS middleware - must be before routes and body parsers
+app.use(corsMiddleware);
 
 app.use(express.json());
 
