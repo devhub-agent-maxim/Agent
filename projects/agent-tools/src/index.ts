@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import todosRouter from './routes/todos';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,6 +12,9 @@ app.get('/health', (req: Request, res: Response) => {
     uptime: process.uptime()
   });
 });
+
+// Mount TODO routes
+app.use('/todos', todosRouter);
 
 if (require.main === module) {
   app.listen(PORT, () => {
