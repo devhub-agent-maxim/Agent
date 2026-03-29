@@ -221,6 +221,46 @@ curl -X GET http://localhost:3002/schedules \
   -H "Authorization: Bearer your-token"
 ```
 
+## Security
+
+The API uses **helmet** middleware to set comprehensive security headers that protect against common web vulnerabilities.
+
+### Security Headers
+
+All endpoints include the following security headers:
+
+| Header | Value | Protection |
+|--------|-------|------------|
+| `Content-Security-Policy` | Strict CSP for API (no inline scripts) | Prevents XSS and data injection attacks |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` | Forces HTTPS connections for 1 year |
+| `X-Frame-Options` | `DENY` | Prevents clickjacking by blocking iframe embedding |
+| `X-Content-Type-Options` | `nosniff` | Prevents MIME type sniffing attacks |
+| `X-DNS-Prefetch-Control` | `off` | Disables DNS prefetching for privacy |
+| `X-Download-Options` | `noopen` | Prevents IE from executing downloads in site context |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Controls referrer information leakage |
+| `X-Permitted-Cross-Domain-Policies` | `none` | Restricts Adobe Flash/PDF cross-domain access |
+
+**Additional Protections:**
+- ✅ `X-Powered-By` header removed (server fingerprinting prevention)
+- ✅ CSP blocks all inline scripts/styles (strict API security)
+- ✅ CSP includes `frame-ancestors 'none'` (clickjacking protection)
+- ✅ HSTS preload flag enabled (browser HSTS preload list inclusion)
+
+**Verify Security Headers:**
+```bash
+# Check all security headers
+curl -I http://localhost:3002/health | grep -E "(Content-Security|Strict-Transport|X-Frame|X-Content-Type|X-DNS|Referrer|X-Permitted)"
+
+# Expected output includes:
+# content-security-policy: default-src 'self'; script-src 'self'...
+# strict-transport-security: max-age=31536000; includeSubDomains; preload
+# x-frame-options: DENY
+# x-content-type-options: nosniff
+# x-dns-prefetch-control: off
+# referrer-policy: strict-origin-when-cross-origin
+# x-permitted-cross-domain-policies: none
+```
+
 ## Database Schema
 
 **scheduled_tasks table:**
