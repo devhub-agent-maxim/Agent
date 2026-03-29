@@ -405,4 +405,10 @@ async function validate(workerId, workerOutput, notifyFns = {}) {
   return { committed, sha, score, suggestions, issueUrl };
 }
 
-module.exports = { validate };
+module.exports = {
+  validate,
+  // Expose for testing
+  _extractWorkerMessage: extractWorkerMessage,
+  _generateCommitMessage: generateCommitMessage,
+  _reviewWithClaude: reviewWithClaude,
+};
