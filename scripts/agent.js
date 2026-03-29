@@ -674,14 +674,13 @@ async function workLoop() {
   workers.spawnWorker(workerId, decision.prompt);
 }
 
-// ── 7 AM daily brief — GitHub + Jira + overnight summary ─────────────────────
+// ── 7 AM daily brief — GitHub + overnight summary ────────────────────────────
 
 async function dailyBrief() {
   log('[Brief] Generating 7 AM daily brief...');
   memory.log('Daily brief started (7 AM)');
 
   const gitOps = require('./lib/git-ops');
-  const jira   = require('./lib/jira');
   const today  = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
   // 1. GitHub: commits since yesterday midnight
@@ -695,16 +694,7 @@ async function dailyBrief() {
     ).trim();
   } catch {}
 
-  // 2. Jira: open tickets
-  let jiraLines = '';
-  if (jira.isConfigured()) {
-    const issues = await jira.getOpenIssues(8).catch(() => []);
-    if (issues.length > 0) {
-      jiraLines = issues.map(i => `• \`${i.key}\` [${i.status}] ${i.summary.slice(0, 70)}`).join('\n');
-    }
-  }
-
-  // 3. Overnight work log (all entries from last 12h)
+  // 2. Overnight work log (all entries from last 12h)
   const dailyLog = memory.readToday();
   const logEntries = (dailyLog || '').split('\n')
     .filter(l => l.startsWith('- ') && !l.includes('Work loop tick') && !l.includes('Work loop: waiting'))
@@ -722,8 +712,6 @@ async function dailyBrief() {
       `Overnight activity log:\n${logEntries || '(no activity)'}`,
       '',
       `GitHub commits made overnight:\n${commits || '(none)'}`,
-      '',
-      `Open Jira tickets:\n${jiraLines || '(Jira not configured)'}`,
       '',
       'Write a 3-5 bullet point summary of what was accomplished overnight and what is in progress.',
       'Be specific about what was built/fixed. Keep it concise for a morning Telegram message.',
@@ -744,10 +732,6 @@ async function dailyBrief() {
 
   if (commits) {
     lines.push('🔀 *GitHub commits:*', commits, '');
-  }
-
-  if (jiraLines) {
-    lines.push('🎫 *Open Jira tickets:*', jiraLines, '');
   }
 
   lines.push(
@@ -964,7 +948,7 @@ async function main() {
   await notify(
     `✅ *Agent online* — ${new Date().toLocaleString()}\n` +
     `⏱ Work loop: every 10 min (autonomous, no goals needed)\n` +
-    `🌅 Daily brief: 07:00 AM — GitHub + Jira + overnight summary\n` +
+    `🌅 Daily brief: 07:00 AM — GitHub + overnight summary\n` +
     `🧠 Nightly: 02:00 AM — consolidation\n` +
     `📡 Intel: 08:00 AM — curated digest → Social Monitor\n` +
     `${newProjectNote}\n` +
