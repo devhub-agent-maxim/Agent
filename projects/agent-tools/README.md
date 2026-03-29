@@ -17,7 +17,7 @@ A TypeScript + Express REST API for productivity tools with SQLite persistence a
 - ✅ Request tracking with unique request IDs
 - ✅ Centralized error handling
 - ✅ OpenAPI/Swagger documentation
-- ✅ Comprehensive test coverage (125+ tests)
+- ✅ Comprehensive test coverage (147+ tests including 14 rate limiting tests)
 - ✅ TypeScript with strict type checking
 
 ## Getting Started
@@ -201,16 +201,33 @@ Authorization: Bearer your-api-key-here
 
 ### Rate Limiting
 
-All `/todos/*` endpoints are protected by rate limiting to prevent abuse and ensure fair usage.
+All `/todos/*` endpoints are protected by rate limiting to prevent abuse and ensure fair usage. The `/health` endpoint is **not rate limited** to allow continuous monitoring.
 
 **Default Limits:**
 - **100 requests per 15 minutes** per IP address
-- Rate limit information is included in response headers:
-  - `RateLimit-Limit`: Maximum requests allowed in the window
-  - `RateLimit-Remaining`: Number of requests remaining
-  - `RateLimit-Reset`: Timestamp when the rate limit resets
+- Applies to: All `/todos/*` endpoints (POST, GET, PUT, DELETE)
+- Exempt endpoints: `/health`, `/api-docs`
 
-**Rate Limit Exceeded Response:**
+**Rate Limit Headers**
+
+Every successful request includes rate limit information in the response headers:
+
+| Header | Description | Example |
+|--------|-------------|---------|
+| `RateLimit-Limit` | Maximum requests allowed in the current window | `100` |
+| `RateLimit-Remaining` | Number of requests remaining in the current window | `87` |
+| `RateLimit-Reset` | Seconds until the rate limit window resets | `847` |
+
+**When Rate Limit is Exceeded:**
+
+When you exceed the rate limit, you'll receive a `429 Too Many Requests` response with additional headers:
+
+| Header | Description | Example |
+|--------|-------------|---------|
+| `Retry-After` | Seconds to wait before making another request | `123` |
+| `RateLimit-Remaining` | Always `0` when rate limited | `0` |
+
+**Example Rate Limit Exceeded Response:**
 ```json
 {
   "error": "Too many requests from this IP, please try again later.",
@@ -221,10 +238,33 @@ All `/todos/*` endpoints are protected by rate limiting to prevent abuse and ens
 **Status Code:** `429 Too Many Requests`
 
 **Best Practices:**
-- Monitor the `RateLimit-Remaining` header to track your usage
-- Implement exponential backoff when receiving 429 responses
-- Cache responses when possible to reduce API calls
-- Distribute requests evenly throughout the time window
+- **Monitor headers:** Check `RateLimit-Remaining` to track your usage
+- **Respect `Retry-After`:** Wait the specified seconds before retrying
+- **Implement backoff:** Use exponential backoff when receiving 429 responses
+- **Cache responses:** Reduce API calls by caching data when possible
+- **Distribute requests:** Spread requests evenly throughout the time window
+- **Plan for limits:** In high-traffic scenarios, implement request queuing
+
+**Example Usage:**
+```bash
+# First request - check rate limit headers
+curl -H "Authorization: Bearer your-api-key" \
+  http://localhost:3000/todos \
+  -v 2>&1 | grep -i ratelimit
+
+# Response headers:
+# RateLimit-Limit: 100
+# RateLimit-Remaining: 99
+# RateLimit-Reset: 897
+
+# After 100 requests in 15 minutes:
+curl -H "Authorization: Bearer your-api-key" \
+  http://localhost:3000/todos
+
+# 429 Too Many Requests
+# Retry-After: 123
+# RateLimit-Remaining: 0
+```
 
 ### CORS Configuration
 
