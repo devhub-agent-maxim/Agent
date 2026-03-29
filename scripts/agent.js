@@ -52,6 +52,7 @@ const dashboard      = require('./lib/dashboard');
 const { processVideo, extractVideoUrl } = require('./agents/video-intel-agent');
 const sprintMgr = require('./lib/sprint-manager');
 const changeValidator = require('./agents/change-validator');
+const usageTracker = require('./lib/usage-tracker');
 
 const { spawn, execSync } = require('child_process');
 const path = require('path');
@@ -424,6 +425,7 @@ async function dispatchCommand(chatId, thread, text, msgId) {
       '`/goals`     — Current goals',
       '`/workers`   — Running background workers',
       '`/schedule`  — Scheduled jobs',
+      '`/usage`     — Claude API call stats for this session',
       '`/monitor`   — Run intel scraper now (all platforms)',
       '`/monitor-twitter` — Twitter monitoring only',
       '`/monitor-tiktok` — TikTok trends only',
@@ -488,6 +490,33 @@ async function dispatchCommand(chatId, thread, text, msgId) {
     if (inProgress.length > 0) {
       lines.push('', '*In Progress:*');
       for (const t of inProgress) lines.push(`  • \`${t.id}\` — ${t.desc.slice(0, 60)}`);
+    }
+
+    await sendMsg(chatId, lines.join('\n'), thread);
+    return;
+  }
+
+  // ── /usage ────────────────────────────────────────────────────────────────
+  if (text === '/usage') {
+    const stats  = usageTracker.getSessionStats();
+    const recent = usageTracker.getRecentCalls(10);
+
+    const lines = [
+      '⚡ *Claude API Usage — This Session*',
+      `• Total calls: \`${stats.calls}\``,
+      `• Total chars sent: \`${Math.round(stats.chars / 1000)}k\``,
+      '',
+    ];
+
+    if (recent.length > 0) {
+      lines.push('*Last 10 calls:*');
+      recent.reverse().forEach((c, i) => {
+        const ts  = new Date(c.ts).toLocaleTimeString();
+        const sum = (c.summary || '').slice(0, 60);
+        lines.push(`\`${ts}\` #${c.call} [${c.model}] ${sum}`);
+      });
+    } else {
+      lines.push('_No calls this session yet_');
     }
 
     await sendMsg(chatId, lines.join('\n'), thread);

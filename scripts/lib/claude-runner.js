@@ -21,6 +21,7 @@
 const { spawn } = require('child_process');
 const path      = require('path');
 const { config } = require('./config');
+const usageTracker = require('./usage-tracker');
 
 const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes
 const DEFAULT_CWD        = path.resolve(__dirname, '..', '..');
@@ -93,6 +94,10 @@ function runClaude(prompt, opts = {}) {
   // Resolve model: accept shorthand ('sonnet', 'opus', 'haiku') or full name
   const modelKey   = opts.model ?? 'sonnet';
   const modelName  = MODELS[modelKey] ?? modelKey; // fallback: treat as full model name
+
+  // Track every Claude call — logs to memory/usage-log.jsonl + pings Telegram
+  const promptSummary = prompt.replace(/\n/g, ' ').trim().slice(0, 80);
+  usageTracker.trackCall(promptSummary, modelKey, prompt.length);
 
   return new Promise((resolve) => {
     let stdout   = '';
