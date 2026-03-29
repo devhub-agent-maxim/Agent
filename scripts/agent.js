@@ -846,6 +846,30 @@ async function startTelegramPolling() {
 // ── Startup ───────────────────────────────────────────────────────────────────
 
 async function main() {
+  // ── Check for duplicate agent processes before starting ──────────────────────
+  try {
+    const processManagerPath = path.join(__dirname, 'process-manager.js');
+    execSync(`node "${processManagerPath}" --check`, {
+      stdio: 'pipe',
+      encoding: 'utf8'
+    });
+  } catch (err) {
+    // Exit code 1 means duplicates detected
+    if (err.status === 1) {
+      // Extract PIDs from stderr/stdout if available
+      const output = err.stdout || err.stderr || '';
+      const pidMatches = output.match(/PID\s+(\d+)/g) || [];
+      const pids = pidMatches.map(m => m.match(/\d+/)[0]).filter(pid => pid !== String(process.pid));
+
+      const pidList = pids.length > 0 ? pids.join(', ') : 'unknown';
+      console.error(`\n❌ ERROR: Another agent instance is already running (PID: ${pidList}).`);
+      console.error('Stop it first or use scripts/process-manager.js --status to investigate.\n');
+      process.exit(1);
+    }
+    // Other errors (like process-manager.js not found) should not block startup
+    console.warn(`⚠️  Warning: Could not check for duplicate processes: ${err.message}`);
+  }
+
   console.log('\n╔══════════════════════════════════════════════╗');
   console.log('║  Autonomous Agent — Booting                  ║');
   console.log(`║  ${new Date().toLocaleString().padEnd(44)}║`);
