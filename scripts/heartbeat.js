@@ -11,7 +11,6 @@
  *   [deploy]   → scripts/agents/deploy-agent.js      (GitHub push + Vercel)
  *   [qa]       → scripts/agents/qa-agent.js          (run tests only)
  *   [monitor]  → scripts/agents/social-monitor-agent.js
- *   [jira]     → scripts/agents/jira-sync-agent.js
  *   (no tag)   → developer-agent.js (default)
  *
  * Usage: node scripts/heartbeat.js
@@ -107,7 +106,6 @@ const AGENT_MAP = {
   deploy:  'deploy-agent.js',
   qa:      'qa-agent.js',
   monitor: 'social-monitor-agent.js',
-  jira:    'jira-sync-agent.js',
 };
 
 function runAgent(task) {

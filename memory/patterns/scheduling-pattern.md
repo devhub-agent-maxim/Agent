@@ -59,7 +59,7 @@ This architecture provides:
 |------|----------------|-----------|----------|
 | **Work Loop** | `*/10 * * * *` | Every 10 minutes | Check goals, spawn workers, process tasks |
 | **Nightly Consolidation** | `0 2 * * *` | Daily at 2:00 AM | Run consolidation agent, prepare next day's note |
-| **Daily Brief** | `0 7 * * *` | Daily at 7:00 AM | GitHub commits + Jira + overnight summary |
+| **Daily Brief** | `0 7 * * *` | Daily at 7:00 AM | GitHub commits + overnight summary |
 
 ---
 

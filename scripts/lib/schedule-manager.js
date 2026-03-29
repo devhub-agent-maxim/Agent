@@ -185,7 +185,7 @@ async function registerAgentTasks(options = {}) {
         'agent-daily-brief',
         '0 7 * * *',
         'echo "Daily brief executed by in-process scheduler"',
-        'Daily brief — GitHub + Jira + overnight summary (in-process)'
+        'Daily brief — GitHub + overnight summary (in-process)'
       );
       registered.push(result);
     }

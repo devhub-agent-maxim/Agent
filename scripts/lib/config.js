@@ -88,17 +88,6 @@ const config = {
     orgId: process.env.VERCEL_ORG_ID || '',
   },
 
-  jira: {
-    baseUrl:    process.env.JIRA_BASE_URL    || '',
-    email:      process.env.JIRA_EMAIL       || '',
-    apiToken:   process.env.JIRA_API_TOKEN   || '',
-    projectKey: process.env.JIRA_PROJECT_KEY || 'DEV',
-  },
-
-  linear: {
-    apiKey: process.env.LINEAR_API_KEY || '',
-  },
-
   google: {
     clientId:     process.env.GOOGLE_CLIENT_ID     || '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
