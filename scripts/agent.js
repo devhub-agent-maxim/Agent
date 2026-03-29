@@ -424,7 +424,12 @@ async function dispatchCommand(chatId, thread, text, msgId) {
       '`/goals`     — Current goals',
       '`/workers`   — Running background workers',
       '`/schedule`  — Scheduled jobs',
-      '`/monitor`   — Run intel scraper now (morning brief on demand)',
+      '`/monitor`   — Run intel scraper now (all platforms)',
+      '`/monitor-twitter` — Twitter monitoring only',
+      '`/monitor-tiktok` — TikTok trends only',
+      '`/monitor-instagram` — Instagram monitoring only',
+      '`/monitor-linkedin` — LinkedIn monitoring only',
+      '`/intel [platform]` — Show recent intel (filter by platform)',
       '',
       '*Video summarizer (just paste a URL):*',
       '`tiktok.com/...`   — Summarize TikTok into bullet points',
@@ -535,7 +540,7 @@ async function dispatchCommand(chatId, thread, text, msgId) {
   }
 
   // ── /monitor ──────────────────────────────────────────────────────────────
-  if (text === '/monitor') {
+  if (text === '/monitor' || text === '/monitor-all') {
     await sendMsg(chatId, '🔍 *Running intel scraper now...* (takes ~60s)', thread);
     // Pass notifyIntel so digest posts to Social Monitor thread (thread 4)
     socialMonitor.run(notifyIntel)
@@ -561,6 +566,88 @@ async function dispatchCommand(chatId, thread, text, msgId) {
         log(`[Monitor] Error: ${err.message}`);
         sendMsg(chatId, `⚠️ Intel scraper error: ${err.message}`, thread);
       });
+    return;
+  }
+
+  // ── /monitor-twitter ──────────────────────────────────────────────────────
+  if (text === '/monitor-twitter') {
+    await sendMsg(chatId, '🐦 *Running Twitter monitor...* (takes ~30s)', thread);
+    const lastSeen = socialMonitor.loadLastSeen?.() || {};
+    socialMonitor.scrapeTwitter?.(lastSeen)
+      .then(items => {
+        sendMsg(chatId, `✅ *Twitter scan complete:* ${items.length} new tweets found`, thread);
+      })
+      .catch(err => {
+        sendMsg(chatId, `⚠️ Twitter monitor error: ${err.message}`, thread);
+      });
+    return;
+  }
+
+  // ── /monitor-tiktok ───────────────────────────────────────────────────────
+  if (text === '/monitor-tiktok') {
+    await sendMsg(chatId, '🎵 *Running TikTok monitor...* (takes ~30s)', thread);
+    const lastSeen = socialMonitor.loadLastSeen?.() || {};
+    socialMonitor.scrapeTikTok?.(lastSeen)
+      .then(items => {
+        sendMsg(chatId, `✅ *TikTok scan complete:* ${items.length} new videos found`, thread);
+      })
+      .catch(err => {
+        sendMsg(chatId, `⚠️ TikTok monitor error: ${err.message}`, thread);
+      });
+    return;
+  }
+
+  // ── /monitor-instagram ────────────────────────────────────────────────────
+  if (text === '/monitor-instagram') {
+    await sendMsg(chatId, '📷 *Running Instagram monitor...* (takes ~30s)', thread);
+    const lastSeen = socialMonitor.loadLastSeen?.() || {};
+    socialMonitor.scrapeInstagram?.(lastSeen)
+      .then(items => {
+        sendMsg(chatId, `✅ *Instagram scan complete:* ${items.length} new posts found`, thread);
+      })
+      .catch(err => {
+        sendMsg(chatId, `⚠️ Instagram monitor error: ${err.message}`, thread);
+      });
+    return;
+  }
+
+  // ── /monitor-linkedin ─────────────────────────────────────────────────────
+  if (text === '/monitor-linkedin') {
+    await sendMsg(chatId, '💼 *Running LinkedIn monitor...* (takes ~30s)', thread);
+    const lastSeen = socialMonitor.loadLastSeen?.() || {};
+    socialMonitor.scrapeLinkedIn?.(lastSeen)
+      .then(items => {
+        sendMsg(chatId, `✅ *LinkedIn scan complete:* ${items.length} new posts found`, thread);
+      })
+      .catch(err => {
+        sendMsg(chatId, `⚠️ LinkedIn monitor error: ${err.message}`, thread);
+      });
+    return;
+  }
+
+  // ── /intel [platform] ─────────────────────────────────────────────────────
+  const intelMatch = text.match(/^\/intel(?:\s+(\w+))?$/i);
+  if (intelMatch) {
+    const platform = intelMatch[1]?.toLowerCase();
+    const intelFile = path.join(ROOT, 'memory', 'areas', 'social-intel.md');
+
+    if (!fs.existsSync(intelFile)) {
+      await sendMsg(chatId, '📭 *No intel data yet.* Run `/monitor` first.', thread);
+      return;
+    }
+
+    const content = fs.readFileSync(intelFile, 'utf8');
+    const lines = content.split('\n');
+    const filtered = platform
+      ? lines.filter(l => l.toLowerCase().includes(platform))
+      : lines.slice(0, 100);
+
+    const preview = filtered.slice(0, 50).join('\n');
+    await sendMsg(
+      chatId,
+      `🧠 *Social Intel${platform ? ` — ${platform}` : ''}*\n\n${preview.slice(0, 3500)}`,
+      thread
+    );
     return;
   }
 

@@ -100,6 +100,45 @@ const config = {
 
   twitter: {
     bearerToken: process.env.TWITTER_BEARER_TOKEN || '',
+    apiKey:      process.env.TWITTER_API_KEY || '',
+    apiSecret:   process.env.TWITTER_API_SECRET || '',
+  },
+
+  tiktok: {
+    rapidApiKey: process.env.RAPIDAPI_KEY || '',
+  },
+
+  linkedin: {
+    accessToken: process.env.LINKEDIN_ACCESS_TOKEN || '',
+  },
+
+  social: {
+    twitter: {
+      apiKey:       process.env.TWITTER_API_KEY || '',
+      apiSecret:    process.env.TWITTER_API_SECRET || '',
+      bearerToken:  process.env.TWITTER_BEARER_TOKEN || '',
+      handles:      ['nateliason', 'raycfu', 'ruvnet', 'anthropicai'],
+      hashtags:     ['ClaudeCode', 'OpenClaw', 'AgenticAI', 'AutonomousAgents'],
+    },
+    tiktok: {
+      rapidApiKey:  process.env.RAPIDAPI_KEY || '',
+      creators:     ['raycfu', 'nateliason'],
+      hashtags:     ['AI', 'coding', 'automation', 'developers', 'aiagents'],
+    },
+    instagram: {
+      accessToken:  process.env.INSTAGRAM_ACCESS_TOKEN || '',
+      handles:      ['raycfu'],
+      hashtags:     ['aiagents', 'autonomousai', 'claudecode', 'agentic'],
+    },
+    linkedin: {
+      accessToken:  process.env.LINKEDIN_ACCESS_TOKEN || '',
+      profiles:     [],
+      companies:    ['anthropic', 'openai'],
+      hashtags:     ['AgenticAI', 'LLM', 'AIEngineering'],
+    },
+    substack: {
+      feeds:        ['https://creatoreconomy.so/feed'],
+    },
   },
 
   claude: {
