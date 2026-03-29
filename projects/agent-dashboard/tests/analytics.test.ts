@@ -150,8 +150,8 @@ describe('Analytics', () => {
     });
 
     it('should calculate success rate correctly', () => {
-      const logPath = path.join(tempDir, 'memory', 'daily', '2026-03-28.md');
-      const content = `# 2026-03-28
+      const logPath = path.join(tempDir, 'memory', 'daily', '2026-03-29.md');
+      const content = `# 2026-03-29
 - 1:27:33 am — Spawning worker: AUTO-1001 — Task 1
 - 1:30:15 am — Worker done: AUTO-1001 — Task completed
 - 2:27:33 am — Spawning worker: AUTO-1002 — Task 2
@@ -161,7 +161,7 @@ describe('Analytics', () => {
 `;
       fs.writeFileSync(logPath, content, 'utf8');
 
-      const metrics = getWeeklyMetrics(tempDir, 1);
+      const metrics = getWeeklyMetrics(tempDir, 1, new Date('2026-03-29'));
 
       expect(metrics.summary.totalWorkers).toBe(3);
       expect(metrics.summary.totalTasks).toBe(3);
@@ -195,7 +195,7 @@ describe('Analytics', () => {
 - 3:30:15 am — Worker done: AUTO-1006 — Task completed
 `, 'utf8');
 
-      const metrics = getWeeklyMetrics(tempDir, 3);
+      const metrics = getWeeklyMetrics(tempDir, 3, new Date('2026-03-28'));
 
       // 6 total tasks / 3 days = 2 tasks per day
       expect(metrics.summary.totalTasks).toBe(6);

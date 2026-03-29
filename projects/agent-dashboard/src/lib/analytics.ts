@@ -155,15 +155,19 @@ function parseTimeToMs(timeStr: string): number {
 /**
  * Get metrics for the last N days
  */
-export function getWeeklyMetrics(rootDir: string, days: number = 7): WeeklyMetrics {
+export function getWeeklyMetrics(rootDir: string, days: number = 7, endDate?: Date): WeeklyMetrics {
   const dailyMetrics: DailyMetrics[] = [];
-  const today = new Date();
+  const today = endDate || new Date();
 
   for (let i = 0; i < days; i++) {
     const date = new Date(today);
     date.setDate(date.getDate() - i);
 
-    const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
+    // Use local date formatting to match daily log file names
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}`; // YYYY-MM-DD
     const filePath = path.join(rootDir, 'memory', 'daily', `${dateStr}.md`);
 
     const metrics = parseDailyLog(filePath, dateStr);
