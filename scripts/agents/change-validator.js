@@ -149,14 +149,39 @@ function extractWorkerMessage(workerId) {
   const today = new Date().toISOString().slice(0, 10);
   const dailyFile = path.join(ROOT, 'memory', 'daily', `${today}.md`);
 
-  if (!fs.existsSync(dailyFile)) return null;
+  if (!fs.existsSync(dailyFile)) {
+    console.log(`[extractWorkerMessage] Daily file not found: ${dailyFile}`);
+    return null;
+  }
 
   const content = fs.readFileSync(dailyFile, 'utf8');
-  // Match: "- HH:MM:SS am/pm — Worker done: AUTO-1774768974469 — <summary>"
-  const pattern = new RegExp(`Worker done: ${workerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} — (.+?)(?:\n|$)`, 'i');
-  const match = content.match(pattern);
 
-  return match ? match[1].trim() : null;
+  // Find the line with the worker completion message
+  // Format: "- HH:MM am/pm — Worker done: AUTO-1774768974469 — <summary>"
+  const lines = content.split('\n');
+  const workerLine = lines.find(l => l.includes(`Worker done: ${workerId}`));
+
+  if (!workerLine) {
+    console.log(`[extractWorkerMessage] Worker line not found for: ${workerId}`);
+    return null;
+  }
+
+  console.log(`[extractWorkerMessage] Found line: ${workerLine.substring(0, 100)}...`);
+
+  // Split by "Worker done: <workerId> " and extract the summary after the separator
+  const parts = workerLine.split(`Worker done: ${workerId} `);
+  if (parts.length < 2) {
+    console.log(`[extractWorkerMessage] Failed to split line for: ${workerId}`);
+    return null;
+  }
+
+  // Remove leading separator (em dash or similar) and trim
+  const message = parts[1].replace(/^[—\-–\s]+/, '').trim();
+
+  console.log(`[extractWorkerMessage] Extracted: ${message.substring(0, 100)}...`);
+  console.log(`[extractWorkerMessage] Message length: ${message.length}`);
+
+  return message;
 }
 
 // ── Generate commit message ───────────────────────────────────────────────────
