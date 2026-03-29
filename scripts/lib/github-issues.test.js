@@ -59,41 +59,62 @@ describe('github-issues', () => {
   // Helper to mock successful API response
   function mockApiResponse(statusCode, responseBody) {
     https.request.mockImplementation((opts, callback) => {
+      const dataHandlers = [];
+      const endHandlers = [];
+
+      const mockRes = {
+        statusCode,
+        on: jest.fn((event, handler) => {
+          if (event === 'data') {
+            dataHandlers.push(handler);
+          } else if (event === 'end') {
+            endHandlers.push(handler);
+          }
+          return mockRes;
+        }),
+      };
+
       const mockReq = {
         write: jest.fn(),
-        end: jest.fn(),
+        end: jest.fn(() => {
+          // When end() is called, trigger the callback and events
+          setImmediate(() => {
+            callback(mockRes);
+            setImmediate(() => {
+              dataHandlers.forEach(h => h(Buffer.from(JSON.stringify(responseBody))));
+              setImmediate(() => {
+                endHandlers.forEach(h => h());
+              });
+            });
+          });
+        }),
         on: jest.fn().mockReturnThis(),
       };
 
-      // Simulate async response
-      setImmediate(() => {
-        const mockRes = {
-          statusCode,
-          on: jest.fn((event, handler) => {
-            if (event === 'data') {
-              setImmediate(() => handler(Buffer.from(JSON.stringify(responseBody))));
-            } else if (event === 'end') {
-              setImmediate(() => handler());
-            }
-            return mockRes;
-          }),
-        };
-        callback(mockRes);
-      });
-
       return mockReq;
     });
+
+    // Reload module to pick up new mock
+    jest.resetModules();
+    githubIssues = require('./github-issues');
   }
 
   // Helper to mock API error
   function mockApiError(error) {
     https.request.mockImplementation(() => {
+      const errorHandlers = [];
+
       const mockReq = {
         write: jest.fn(),
-        end: jest.fn(),
+        end: jest.fn(() => {
+          // Trigger error when end() is called
+          setImmediate(() => {
+            errorHandlers.forEach(h => h(error));
+          });
+        }),
         on: jest.fn((event, handler) => {
           if (event === 'error') {
-            setImmediate(() => handler(error));
+            errorHandlers.push(handler);
           }
           return mockReq;
         }),
@@ -201,26 +222,36 @@ describe('github-issues', () => {
       let callCount = 0;
       https.request.mockImplementation((opts, callback) => {
         callCount++;
-        const mockReq = {
-          write: jest.fn(),
-          end: jest.fn(),
-          on: jest.fn().mockReturnThis(),
+        const dataHandlers = [];
+        const endHandlers = [];
+
+        const mockRes = {
+          statusCode: callCount === 1 ? 201 : 200,
+          on: jest.fn((event, handler) => {
+            if (event === 'data') {
+              dataHandlers.push(handler);
+            } else if (event === 'end') {
+              endHandlers.push(handler);
+            }
+            return mockRes;
+          }),
         };
 
-        setImmediate(() => {
-          const mockRes = {
-            statusCode: callCount === 1 ? 201 : 200,
-            on: jest.fn((event, handler) => {
-              if (event === 'data') {
-                setImmediate(() => handler(Buffer.from('{}')));
-              } else if (event === 'end') {
-                setImmediate(() => handler());
-              }
-              return mockRes;
-            }),
-          };
-          callback(mockRes);
-        });
+        const mockReq = {
+          write: jest.fn(),
+          end: jest.fn(() => {
+            setImmediate(() => {
+              callback(mockRes);
+              setImmediate(() => {
+                dataHandlers.forEach(h => h(Buffer.from('{}')));
+                setImmediate(() => {
+                  endHandlers.forEach(h => h());
+                });
+              });
+            });
+          }),
+          on: jest.fn().mockReturnThis(),
+        };
 
         return mockReq;
       });
@@ -262,26 +293,36 @@ describe('github-issues', () => {
       let callCount = 0;
       https.request.mockImplementation((opts, callback) => {
         callCount++;
-        const mockReq = {
-          write: jest.fn(),
-          end: jest.fn(),
-          on: jest.fn().mockReturnThis(),
+        const dataHandlers = [];
+        const endHandlers = [];
+
+        const mockRes = {
+          statusCode: callCount === 1 ? 201 : 200,
+          on: jest.fn((event, handler) => {
+            if (event === 'data') {
+              dataHandlers.push(handler);
+            } else if (event === 'end') {
+              endHandlers.push(handler);
+            }
+            return mockRes;
+          }),
         };
 
-        setImmediate(() => {
-          const mockRes = {
-            statusCode: callCount === 1 ? 201 : 200,
-            on: jest.fn((event, handler) => {
-              if (event === 'data') {
-                setImmediate(() => handler(Buffer.from('{}')));
-              } else if (event === 'end') {
-                setImmediate(() => handler());
-              }
-              return mockRes;
-            }),
-          };
-          callback(mockRes);
-        });
+        const mockReq = {
+          write: jest.fn(),
+          end: jest.fn(() => {
+            setImmediate(() => {
+              callback(mockRes);
+              setImmediate(() => {
+                dataHandlers.forEach(h => h(Buffer.from('{}')));
+                setImmediate(() => {
+                  endHandlers.forEach(h => h());
+                });
+              });
+            });
+          }),
+          on: jest.fn().mockReturnThis(),
+        };
 
         return mockReq;
       });
@@ -445,26 +486,36 @@ describe('github-issues', () => {
   describe('Edge Cases', () => {
     it('should handle malformed JSON response gracefully', async () => {
       https.request.mockImplementation((opts, callback) => {
-        const mockReq = {
-          write: jest.fn(),
-          end: jest.fn(),
-          on: jest.fn().mockReturnThis(),
+        const dataHandlers = [];
+        const endHandlers = [];
+
+        const mockRes = {
+          statusCode: 200,
+          on: jest.fn((event, handler) => {
+            if (event === 'data') {
+              dataHandlers.push(handler);
+            } else if (event === 'end') {
+              endHandlers.push(handler);
+            }
+            return mockRes;
+          }),
         };
 
-        setImmediate(() => {
-          const mockRes = {
-            statusCode: 200,
-            on: jest.fn((event, handler) => {
-              if (event === 'data') {
-                setImmediate(() => handler(Buffer.from('{"invalid json')));
-              } else if (event === 'end') {
-                setImmediate(() => handler());
-              }
-              return mockRes;
-            }),
-          };
-          callback(mockRes);
-        });
+        const mockReq = {
+          write: jest.fn(),
+          end: jest.fn(() => {
+            setImmediate(() => {
+              callback(mockRes);
+              setImmediate(() => {
+                dataHandlers.forEach(h => h(Buffer.from('{"invalid json')));
+                setImmediate(() => {
+                  endHandlers.forEach(h => h());
+                });
+              });
+            });
+          }),
+          on: jest.fn().mockReturnThis(),
+        };
 
         return mockReq;
       });
@@ -475,24 +526,30 @@ describe('github-issues', () => {
 
     it('should handle empty response body', async () => {
       https.request.mockImplementation((opts, callback) => {
-        const mockReq = {
-          write: jest.fn(),
-          end: jest.fn(),
-          on: jest.fn().mockReturnThis(),
+        const endHandlers = [];
+
+        const mockRes = {
+          statusCode: 200,
+          on: jest.fn((event, handler) => {
+            if (event === 'end') {
+              endHandlers.push(handler);
+            }
+            return mockRes;
+          }),
         };
 
-        setImmediate(() => {
-          const mockRes = {
-            statusCode: 200,
-            on: jest.fn((event, handler) => {
-              if (event === 'end') {
-                setImmediate(() => handler());
-              }
-              return mockRes;
-            }),
-          };
-          callback(mockRes);
-        });
+        const mockReq = {
+          write: jest.fn(),
+          end: jest.fn(() => {
+            setImmediate(() => {
+              callback(mockRes);
+              setImmediate(() => {
+                endHandlers.forEach(h => h());
+              });
+            });
+          }),
+          on: jest.fn().mockReturnThis(),
+        };
 
         return mockReq;
       });
