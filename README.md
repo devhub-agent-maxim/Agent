@@ -1,5 +1,8 @@
 # Agent Stack
 
+[![CI](https://github.com/devhub-agent-maxim/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/devhub-agent-maxim/Agent/actions/workflows/ci.yml)
+[![Docker Build](https://github.com/devhub-agent-maxim/Agent/actions/workflows/docker-build.yml/badge.svg)](https://github.com/devhub-agent-maxim/Agent/actions/workflows/docker-build.yml)
+
 Autonomous agent infrastructure with three core services orchestrated via Docker Compose.
 
 ## Services
