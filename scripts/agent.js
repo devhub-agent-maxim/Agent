@@ -196,6 +196,39 @@ async function sendIdeaCard(item) {
   });
 }
 
+/**
+ * Send a PR approval card to the main group.
+ * Buttons: ✅ Merge | ❌ Skip
+ */
+async function sendPRApproval({ prNumber, prUrl, branch, commitSha, summary, score }) {
+  const sha   = commitSha ? `\`${commitSha}\`` : '–';
+  const scoreEmoji = score >= 8 ? '🟢' : score >= 6 ? '🟡' : '🔴';
+
+  const text = [
+    `🔀 *PR #${prNumber} ready for review*`,
+    '',
+    summary ? `_${summary.slice(0, 120)}_` : '',
+    '',
+    `${scoreEmoji} Score: ${score}/10  |  Commit: ${sha}`,
+    `Branch: \`${branch}\``,
+    `[View PR](${prUrl})`,
+    '',
+    'Merge into main?',
+  ].filter(l => l !== undefined).join('\n');
+
+  await tg('sendMessage', {
+    chat_id:    GROUP_ID,
+    text,
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Merge', callback_data: `pr_merge:${prNumber}` },
+        { text: '❌ Skip',  callback_data: `pr_skip:${prNumber}`  },
+      ]],
+    },
+  });
+}
+
 /** Handle an inline keyboard button press */
 async function handleCallbackQuery(query) {
   const cbId   = query.id;
@@ -209,10 +242,53 @@ async function handleCallbackQuery(query) {
 
   const colonIdx = data.indexOf(':');
   if (colonIdx === -1) return;
-  const action = data.slice(0, colonIdx);
-  const ideaId = data.slice(colonIdx + 1);
+  const action  = data.slice(0, colonIdx);
+  const payload = data.slice(colonIdx + 1);
 
-  const item = pendingIdeas.get(ideaId);
+  // ── PR merge approval ──────────────────────────────────────────────────────
+  if (action === 'pr_merge' || action === 'pr_skip') {
+    const prNumber = parseInt(payload, 10);
+    log(`[Callback] ${from} chose "${action}" for PR #${prNumber}`);
+
+    if (action === 'pr_skip') {
+      await tg('editMessageText', {
+        chat_id:    chatId,
+        message_id: msgId,
+        text:       `⏭️ *PR #${prNumber} skipped*\n_Left open for review_`,
+        parse_mode: 'Markdown',
+      });
+      return;
+    }
+
+    // pr_merge — call GitHub API to squash-merge
+    await tg('editMessageText', {
+      chat_id:    chatId,
+      message_id: msgId,
+      text:       `⏳ Merging PR #${prNumber}...`,
+    });
+
+    const gh = require('./lib/github-issues');
+    const result = await gh.mergePR(prNumber);
+
+    const text = result.success
+      ? `✅ *PR #${prNumber} merged!*\n_${result.message}_`
+      : `❌ *Merge failed for PR #${prNumber}*\n\`${result.message}\``;
+
+    await tg('editMessageText', {
+      chat_id:    chatId,
+      message_id: msgId,
+      text,
+      parse_mode: 'Markdown',
+    });
+
+    if (result.success) {
+      memory.log(`PR #${prNumber} merged by ${from}`);
+    }
+    return;
+  }
+
+  // ── Idea approval ──────────────────────────────────────────────────────────
+  const item = pendingIdeas.get(payload);
   if (!item) {
     await tg('editMessageText', {
       chat_id:    chatId,
@@ -222,7 +298,7 @@ async function handleCallbackQuery(query) {
     return;
   }
 
-  pendingIdeas.delete(ideaId);
+  pendingIdeas.delete(payload);
   log(`[Callback] ${from} chose "${action}" for: ${item.title.slice(0, 60)}`);
 
   let resultText = '';
@@ -343,6 +419,22 @@ workers.onComplete(async (workerId, output, structured) => {
   } else {
     // Blocked — notify urgently
     notify(`🚫 *Worker blocked:* \`${workerId}\`\n${summary}`);
+  }
+
+  // ── PR approval card ───────────────────────────────────────────────────────
+  if (validatorResult.prUrl && validatorResult.prNumber) {
+    try {
+      await sendPRApproval({
+        prNumber:  validatorResult.prNumber,
+        prUrl:     validatorResult.prUrl,
+        branch:    require('./lib/git-ops').getBranch(),
+        commitSha: validatorResult.sha,
+        summary:   validatorResult.suggestions?.[0] || summary.slice(0, 100),
+        score:     validatorResult.score || 6,
+      });
+    } catch (err) {
+      log(`[PR] sendPRApproval error: ${err.message}`);
+    }
   }
 
   // ── Continuous sprint: immediately pick next task from backlog ────────────

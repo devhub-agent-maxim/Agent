@@ -214,4 +214,81 @@ function boardUrl() {
   return `https://github.com/${OWNER}/${REPO}/issues?q=label%3Aagent-task`;
 }
 
-module.exports = { isConfigured, createIssue, closeIssue, blockIssue, getBacklog, getRecentlyDone, boardUrl };
+// ── Pull Request management ───────────────────────────────────────────────────
+
+/**
+ * Find the open PR for a given branch.
+ * Returns { number, url } or null.
+ */
+async function getOpenPR(branch) {
+  if (!isConfigured()) return null;
+  try {
+    const res = await apiRequest('GET', `/pulls?head=${OWNER}:${branch}&state=open&per_page=1`);
+    if (res.status === 200 && Array.isArray(res.body) && res.body.length > 0) {
+      return { number: res.body[0].number, url: res.body[0].html_url };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create a PR from `branch` → main, or return the existing open PR.
+ * Returns { number, url, created: boolean } or null on failure.
+ */
+async function createOrGetPR(branch, title, body = '') {
+  if (!isConfigured()) return null;
+  try {
+    // Check if PR already exists for this branch
+    const existing = await getOpenPR(branch);
+    if (existing) return { ...existing, created: false };
+
+    const res = await apiRequest('POST', '/pulls', {
+      title,
+      body:  body || `Automated PR from agent sprint on \`${branch}\``,
+      head:  branch,
+      base:  'main',
+    });
+
+    if (res.status === 201) {
+      return { number: res.body.number, url: res.body.html_url, created: true };
+    }
+    console.error(`[gh-issues] createOrGetPR failed: ${res.status}`, res.body?.message);
+    return null;
+  } catch (err) {
+    console.error(`[gh-issues] createOrGetPR error: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Squash-merge a PR by number.
+ * Returns { success: boolean, message: string }
+ */
+async function mergePR(prNumber) {
+  if (!isConfigured() || !prNumber) return { success: false, message: 'not configured' };
+  try {
+    const res = await apiRequest('PUT', `/pulls/${prNumber}/merge`, {
+      merge_method: 'squash',
+    });
+    if (res.status === 200) {
+      return { success: true, message: res.body.message || 'Merged' };
+    }
+    return { success: false, message: res.body?.message || `Status ${res.status}` };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+}
+
+module.exports = {
+  isConfigured,
+  createIssue,
+  closeIssue,
+  blockIssue,
+  getBacklog,
+  getRecentlyDone,
+  boardUrl,
+  createOrGetPR,
+  mergePR,
+};

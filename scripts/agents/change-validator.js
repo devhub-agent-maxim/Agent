@@ -297,6 +297,8 @@ async function validate(workerId, workerOutput, notifyFns = {}) {
   let committed = false;
   let sha       = null;
   let commitMsg = '';
+  let prUrl     = null;
+  let prNumber  = null;
 
   if (valid) {
     try {
@@ -316,6 +318,25 @@ async function validate(workerId, workerOutput, notifyFns = {}) {
         committed = true;
         sha = commitResult.sha;
         memory.log(`Auto-committed ${workerId}: ${commitMsg} (score: ${score}/10, SHA: ${sha})`);
+
+        // Create/surface the open PR for this branch so user can approve merge
+        try {
+          const branch = gitOps.getBranch();
+          if (branch && branch !== 'main' && branch !== 'master') {
+            const prResult = await gh.createOrGetPR(
+              branch,
+              commitMsg,
+              `${review?.summary || workerOutput.slice(0, 200)}\n\n**Worker:** \`${workerId}\`\n**Score:** ${score}/10`
+            );
+            if (prResult) {
+              prUrl    = prResult.url;
+              prNumber = prResult.number;
+              log(`PR #${prNumber}: ${prUrl} (${prResult.created ? 'created' : 'existing'})`);
+            }
+          }
+        } catch (prErr) {
+          log(`PR creation error: ${prErr.message}`);
+        }
       } else {
         log(`Commit failed: ${commitResult.error}`);
       }
@@ -402,7 +423,7 @@ async function validate(workerId, workerOutput, notifyFns = {}) {
     await notifyMain(lines.filter(l => l !== undefined && l !== '').join('\n'));
   }
 
-  return { committed, sha, score, suggestions, issueUrl };
+  return { committed, sha, score, suggestions, issueUrl, prUrl, prNumber };
 }
 
 module.exports = {
