@@ -1,4 +1,4 @@
-<!-- last_seen: {"reddit_ClaudeAI":"1774690067","reddit_AutonomousAgents":"1774602952","reddit_LocalLLaMA":"1774691523","reddit_MachineLearning":"1774672650","yt_raycfu":"2026-03-27T16:51:15.000Z","yt_nateliason":"2026-03-21T09:57:10.116Z","gh_claude-flow":"2026-03-26T00:33:54.000Z","gh_claude-code":"2026-03-27T21:42:09.000Z","hn_front":"2026-03-28T14:49:30.000Z"} -->
+<!-- last_seen: {"reddit_ClaudeAI":"1774690067","reddit_AutonomousAgents":"1774602952","reddit_LocalLLaMA":"1774691523","reddit_MachineLearning":"1774672650","yt_raycfu":"2026-03-27T16:51:15.000Z","yt_nateliason":"2026-03-21T09:57:10.116Z","gh_claude-flow":"2026-03-26T00:33:54.000Z","gh_claude-code":"2026-03-27T21:42:09.000Z","hn_front":"2026-03-28T23:04:14.000Z"} -->
 # Social Intelligence Feed
 
 ## 2026-03-28
