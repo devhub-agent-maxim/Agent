@@ -311,7 +311,7 @@ async function seedBacklogFromProjectMd(projectName) {
       }
 
       // Create with backlog label (not in-progress)
-      const result = await gh.createIssue(item, `Project: ${projectName}\n\nPart of ${projectName} sprint backlog.`, null);
+      const result = await gh.createIssue(item, `Project: ${projectName}\n\nPart of ${projectName} sprint backlog.`, null, 'backlog');
       if (result) {
         // Move to backlog label (createIssue puts it in-progress by default)
         // We need a direct API call to set backlog label instead

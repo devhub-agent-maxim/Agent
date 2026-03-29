@@ -92,27 +92,28 @@ async function setLabel(issueNumber, label) {
 
 /**
  * Create a new GitHub Issue for a sprint task.
- * Opens it as "in-progress" immediately.
  *
  * @param {string} title   - Short title (becomes issue title)
  * @param {string} body    - Markdown body with context
  * @param {string} [workerId] - Agent worker ID for cross-reference
+ * @param {string} [status]   - 'in-progress' (default) or 'backlog'
  * @returns {Promise<{number: number, url: string}|null>}
  */
-async function createIssue(title, body = '', workerId = null) {
+async function createIssue(title, body = '', workerId = null, status = 'in-progress') {
   if (!isConfigured()) return null;
   try {
     const fullBody = [
       body,
       '',
       workerId ? `**Agent worker:** \`${workerId}\`` : '',
-      `**Started:** ${new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })}`,
+      `**Created:** ${new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })}`,
     ].filter(Boolean).join('\n');
 
+    const label = KANBAN_LABELS.includes(status) ? status : 'in-progress';
     const res = await apiRequest('POST', '/issues', {
       title,
       body: fullBody,
-      labels: ['in-progress', 'agent-task'],
+      labels: [label, 'agent-task'],
     });
 
     if (res.status === 201) {

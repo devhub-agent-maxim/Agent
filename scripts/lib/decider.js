@@ -2,18 +2,19 @@
 /**
  * Decider — autonomous context-driven decision engine.
  *
- * Called by the work loop every 10 minutes.
+ * Called by the work loop every 10 minutes (or immediately after a sprint task completes).
  * Decides what to work on next WITHOUT requiring manual goals.
  *
- * How it works (OpenClaw-style):
+ * How it works (sprint-first, OpenClaw-style):
  *   1. Active workers at capacity? → wait
- *   2. Orphaned in-progress task? → restart it
- *   3. Pending tasks in TASKS.md? → execute next (highest priority)
- *   4. Gather FULL context: git status, projects, intel, recent work
- *   5. Ask Claude: "given everything you see, what's the single best thing to do right now?"
- *   6. Claude returns a specific, actionable task — agent does it
+ *   2. GitHub Issues backlog? → pick next issue immediately (sprint mode)
+ *   3. Orphaned in-progress task? → restart it
+ *   4. Pending tasks in TASKS.md? → execute next (highest priority)
+ *   5. Gather FULL context + PROJECT.md briefs + recent work
+ *   6. Ask Claude: "given everything you see, what's the single best thing to do right now?"
+ *   7. Claude returns a specific, actionable task — agent does it
  *
- * No goals.md required. The agent reads its own context and self-directs.
+ * No goals.md required. GitHub Issues is the source of truth for sprint work.
  */
 
 'use strict';
@@ -25,6 +26,8 @@ const { runClaude } = require('./claude-runner');
 const memory        = require('./memory');
 const gitOps        = require('./git-ops');
 const { config }    = require('./config');
+const gh            = require('./github-issues');
+const sprintMgr     = require('./sprint-manager');
 
 const ROOT       = path.resolve(__dirname, '..', '..');
 const TASKS_FILE = path.join(ROOT, 'memory', 'TASKS.md');
@@ -160,7 +163,52 @@ async function decide(activeWorkerList) {
     };
   }
 
-  // ── 2. Orphaned in-progress tasks ─────────────────────────────────────────
+  // ── 2. GitHub Issues backlog — sprint work takes top priority ────────────
+  if (gh.isConfigured()) {
+    try {
+      const backlog = await gh.getBacklog();
+      if (backlog.length > 0) {
+        const issue = backlog[0];
+        const projectName = sprintMgr.listSprintableProjects().find(p =>
+          issue.title.toLowerCase().includes(p.toLowerCase().replace(/-/g, ' ')) ||
+          issue.title.toLowerCase().includes(p.toLowerCase())
+        );
+        const brief = projectName ? sprintMgr.readProjectBrief(projectName) : null;
+
+        const sprintGoal  = brief?.match(/## Current Sprint Goal\n([\s\S]*?)(?=\n## |$)/)?.[1]?.trim() || '';
+        const constraints = brief?.match(/## Constraints\n([\s\S]*?)(?=\n## |$)/)?.[1]?.trim() || '';
+        const stack       = brief?.match(/## Stack\n([\s\S]*?)(?=\n## |$)/)?.[1]?.trim() || '';
+
+        const prompt = [
+          `## Task: ${issue.title}`,
+          `GitHub Issue: #${issue.number} (${issue.url})`,
+          '',
+          projectName ? `Project: projects/${projectName}` : '',
+          sprintGoal  ? `Sprint goal: ${sprintGoal}` : '',
+          stack       ? `Stack: ${stack}` : '',
+          constraints ? `Constraints:\n${constraints}` : '',
+          '',
+          '## Instructions',
+          '1. Read existing code in the project directory first',
+          '2. Implement the feature described in the issue title',
+          '3. Write tests — all tests must pass (npm test)',
+          '4. Do NOT commit — the validator handles commits',
+          '5. Output a one-line summary of what you built when done',
+        ].filter(Boolean).join('\n');
+
+        return {
+          action: 'work',
+          taskId: `ISSUE-${issue.number}`,
+          prompt,
+          reason: `GitHub Issue #${issue.number}: ${issue.title}`,
+        };
+      }
+    } catch (err) {
+      memory.log(`Decider: GitHub Issues check failed — ${err.message}`);
+    }
+  }
+
+  // ── 3. Orphaned in-progress tasks ─────────────────────────────────────────
   const { pending, inProgress } = parseTasks(TASKS_FILE);
   const activeIds = new Set(activeWorkerList.map(w => w.id));
   const orphaned  = inProgress.filter(t => !activeIds.has(t.id));
@@ -175,7 +223,7 @@ async function decide(activeWorkerList) {
     };
   }
 
-  // ── 3. Execute next pending queued task ───────────────────────────────────
+  // ── 4. Execute next pending queued task ───────────────────────────────────
   if (pending.length > 0) {
     const next = pending[0];
     return {

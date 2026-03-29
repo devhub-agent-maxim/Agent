@@ -50,6 +50,7 @@ const { runClaude }  = require('./lib/claude-runner');
 const socialMonitor  = require('./agents/social-monitor-agent');
 const dashboard      = require('./lib/dashboard');
 const { processVideo, extractVideoUrl } = require('./agents/video-intel-agent');
+const sprintMgr = require('./lib/sprint-manager');
 const changeValidator = require('./agents/change-validator');
 
 const { spawn, execSync } = require('child_process');
@@ -313,7 +314,6 @@ workers.onComplete(async (workerId, output, structured) => {
 
   const summary   = structured?.summary || output.slice(0, 500);
   const isBlocked = structured?.status === 'blocked';
-  const emoji     = isBlocked ? '🚫' : '✅';
 
   // Update TASKS.md if this was a queued task
   if (workerId.match(/^TASK-\d+$/)) {
@@ -328,19 +328,46 @@ workers.onComplete(async (workerId, output, structured) => {
     }
   }
 
-  // Brief initial notify so Maxim knows it finished
-  const nextAction = structured?.nextAction
-    ? `\n\n*Next action needed:* ${structured.nextAction}`
-    : '';
-  notify(`${emoji} *${workerId} complete*\n${summary}${nextAction}`);
-
-  // Run change validator: checks diff, auto-commits, updates Jira, sends report
+  // Run change validator: checks diff, auto-commits, creates GitHub Issue, sends standup
+  let validatorResult = { committed: false, sha: null, issueUrl: null };
   if (!isBlocked) {
     try {
-      await changeValidator.validate(workerId, output, { notifyMain: notify });
+      // Silent during sprint — validator sends standup only, no extra notify
+      validatorResult = await changeValidator.validate(workerId, output, { notifyMain: notify });
     } catch (err) {
       log(`[Validator] Error: ${err.message}`);
       memory.log(`Validator error for ${workerId}: ${err.message}`);
+      notify(`⚠️ *Validator error for \`${workerId}\`:* ${err.message}`);
+    }
+  } else {
+    // Blocked — notify urgently
+    notify(`🚫 *Worker blocked:* \`${workerId}\`\n${summary}`);
+  }
+
+  // ── Continuous sprint: immediately pick next task from backlog ────────────
+  // Don't wait 10 minutes — if there's more work, do it now.
+  if (!isBlocked) {
+    try {
+      const sprint = await sprintMgr.onWorkerDone(
+        workerId,
+        validatorResult.sha,
+        summary,
+        notify  // sprint-complete Telegram notification
+      );
+
+      if (sprint.hasMore && sprint.nextPrompt) {
+        const nextId = `ISSUE-${sprint.issueNumber || Date.now()}`;
+        log(`[Sprint] Continuing — next: ${sprint.issueTitle || nextId}`);
+        memory.log(`Sprint: starting ${nextId} — ${(sprint.issueTitle || '').slice(0, 60)}`);
+
+        // Small pause before next task (let filesystem settle)
+        await new Promise(r => setTimeout(r, 3000));
+        workers.spawnWorker(nextId, sprint.nextPrompt);
+      } else {
+        log('[Sprint] Backlog empty — entering idle mode (next check in 10 min)');
+      }
+    } catch (err) {
+      log(`[Sprint] onWorkerDone error: ${err.message}`);
     }
   }
 });
