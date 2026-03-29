@@ -52,7 +52,8 @@ const dashboard      = require('./lib/dashboard');
 const { processVideo, extractVideoUrl } = require('./agents/video-intel-agent');
 const sprintMgr = require('./lib/sprint-manager');
 const changeValidator = require('./agents/change-validator');
-const usageTracker = require('./lib/usage-tracker');
+const usageTracker   = require('./lib/usage-tracker');
+const projectThreads = require('./lib/project-threads');
 
 const { spawn, execSync } = require('child_process');
 const path = require('path');
@@ -149,6 +150,18 @@ async function notify(text) {
 /** Post intel digest to Social Monitor topic */
 async function notifyIntel(text) {
   await sendMsg(GROUP_ID, text, THREAD_SOCIAL_MONITOR);
+}
+
+/**
+ * Route a sprint/standup message to the project's own Telegram thread.
+ * Falls back to main group if the project has no thread configured.
+ *
+ * @param {string} projectName
+ * @param {string} text
+ */
+async function notifyProject(projectName, text) {
+  const threadId = projectThreads.getThreadId(projectName);
+  await sendMsg(GROUP_ID, text, threadId);
 }
 
 /**
@@ -409,8 +422,11 @@ workers.onComplete(async (workerId, output, structured) => {
   let validatorResult = { committed: false, sha: null, issueUrl: null };
   if (!isBlocked) {
     try {
-      // Silent during sprint — validator sends standup only, no extra notify
-      validatorResult = await changeValidator.validate(workerId, output, { notifyMain: notify });
+      // Route standup to the project's own Telegram thread (or main group if not mapped)
+      const projectName = sprintMgr.getStatus().project || null;
+      const standupNotify = (msg) => notifyProject(projectName, msg);
+
+      validatorResult = await changeValidator.validate(workerId, output, { notifyMain: standupNotify });
     } catch (err) {
       log(`[Validator] Error: ${err.message}`);
       memory.log(`Validator error for ${workerId}: ${err.message}`);
@@ -518,6 +534,7 @@ async function dispatchCommand(chatId, thread, text, msgId) {
       '`/workers`   — Running background workers',
       '`/schedule`  — Scheduled jobs',
       '`/usage`     — Claude API call stats for this session',
+      '`/threads`   — View/set per-project Telegram topic routing',
       '`/monitor`   — Run intel scraper now (all platforms)',
       '`/monitor-twitter` — Twitter monitoring only',
       '`/monitor-tiktok` — TikTok trends only',
@@ -611,6 +628,44 @@ async function dispatchCommand(chatId, thread, text, msgId) {
       lines.push('_No calls this session yet_');
     }
 
+    await sendMsg(chatId, lines.join('\n'), thread);
+    return;
+  }
+
+  // ── /threads ──────────────────────────────────────────────────────────────
+  // /threads                  → list all configured project threads
+  // /threads set <name> <id>  → register a project → thread mapping
+  if (text === '/threads' || text.startsWith('/threads ')) {
+    const parts = text.split(/\s+/);
+
+    if (parts.length >= 4 && parts[1] === 'set') {
+      // /threads set agent-tools 12
+      const projName = parts[2];
+      const tId      = parseInt(parts[3], 10);
+      if (isNaN(tId)) {
+        await sendMsg(chatId, '❌ Thread ID must be a number. Usage: `/threads set <project> <thread_id>`', thread);
+        return;
+      }
+      projectThreads.registerThread(projName, tId);
+      await sendMsg(chatId, `✅ *Registered:* \`${projName}\` → thread \`${tId}\`\n\nStandup messages for this project will now go to that thread.`, thread);
+      return;
+    }
+
+    // List all
+    const all   = projectThreads.listAll();
+    const lines = ['🗺️ *Project Thread Map*', ''];
+    const entries = Object.entries(all);
+    if (entries.length === 0) {
+      lines.push('_No projects mapped yet._');
+      lines.push('');
+      lines.push('To add one: `/threads set <project-name> <thread-id>`');
+      lines.push('To find thread IDs: run `/thread-ids` in any topic');
+    } else {
+      for (const [name, id] of entries) {
+        lines.push(`• \`${name}\` → thread \`${id}\``);
+      }
+      lines.push('', 'To add: `/threads set <name> <id>`');
+    }
     await sendMsg(chatId, lines.join('\n'), thread);
     return;
   }
