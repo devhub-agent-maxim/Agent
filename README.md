@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/devhub-agent-maxim/Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/devhub-agent-maxim/Agent/actions/workflows/ci.yml)
 [![Docker Build](https://github.com/devhub-agent-maxim/Agent/actions/workflows/docker-build.yml/badge.svg)](https://github.com/devhub-agent-maxim/Agent/actions/workflows/docker-build.yml)
+[![Security](https://github.com/devhub-agent-maxim/Agent/actions/workflows/security.yml/badge.svg)](https://github.com/devhub-agent-maxim/Agent/actions/workflows/security.yml)
 
 Autonomous agent infrastructure with three core services orchestrated via Docker Compose.
 
@@ -222,6 +223,70 @@ docker-compose logs -f
 # Specific service
 docker-compose logs -f agent-tools
 ```
+
+## Security
+
+The agent stack includes comprehensive automated security scanning through GitHub Actions:
+
+### Automated Security Scans
+
+| Scan Type | Trigger | Description |
+|-----------|---------|-------------|
+| **npm audit** | Every push/PR | Scans dependencies for high/critical vulnerabilities in all projects |
+| **CodeQL Analysis** | Push to main, PRs, weekly | Advanced semantic code analysis for JavaScript/TypeScript security issues |
+| **Dependency Review** | Pull requests | Analyzes PR dependencies for known vulnerabilities and licensing issues |
+
+### Security Scanning Features
+
+- ✅ **npm audit** runs on every test job with `--audit-level=high` flag
+  - Fails CI build if high or critical vulnerabilities detected
+  - Scans all three projects: agent-tools, agent-dashboard, agent-scheduler
+- ✅ **CodeQL** performs deep semantic analysis
+  - Uses `security-extended` query suite for comprehensive coverage
+  - Analyzes compiled JavaScript/TypeScript code
+  - Runs weekly on schedule to catch newly discovered vulnerabilities
+- ✅ **Dependency Review** protects the supply chain
+  - Blocks PRs that introduce vulnerable dependencies
+  - Posts automated summary comments on PRs
+  - Configurable severity threshold (currently: high)
+
+### Viewing Security Results
+
+```bash
+# View security workflow runs
+gh workflow view security
+
+# Check latest security scan results
+gh run list --workflow=security.yml --limit 5
+
+# View CodeQL alerts (requires repo access)
+gh api repos/devhub-agent-maxim/Agent/code-scanning/alerts
+
+# Check dependency vulnerabilities
+cd projects/agent-tools && npm audit
+cd projects/agent-dashboard && npm audit
+cd projects/agent-scheduler && npm audit
+```
+
+### Security Best Practices
+
+1. **Keep dependencies updated:** Regularly run `npm audit fix` to patch vulnerabilities
+2. **Review security alerts:** Check GitHub Security tab for CodeQL findings
+3. **Monitor PRs:** Review Dependency Review comments before merging
+4. **Rotate credentials:** Change API keys regularly, never commit secrets
+5. **Use strong authentication:** Enforce strong API keys in production
+
+### Security Headers
+
+All services implement security headers via helmet middleware:
+
+- Content-Security-Policy (CSP)
+- Strict-Transport-Security (HSTS)
+- X-Frame-Options (clickjacking protection)
+- X-Content-Type-Options (MIME sniffing protection)
+- Referrer-Policy
+
+See individual service READMEs for detailed security configurations.
 
 ## Development
 
