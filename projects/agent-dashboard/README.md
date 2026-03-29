@@ -4,6 +4,7 @@ Real-time observability dashboard for the autonomous agent system.
 
 ## Features
 
+- **Service Health Monitoring**: Real-time health checks for agent-tools, agent-scheduler, and agent-dashboard with color-coded status indicators (green=healthy <500ms, yellow=slow 500-2000ms, red=down/timeout)
 - **Weekly Metrics**: Performance analytics with task completion, success rate, and timing data
 - **Active Goals**: Shows current goals from `memory/goals.md`
 - **Tasks**: Displays in-progress, pending, and completed tasks from `memory/TASKS.md`
@@ -504,6 +505,98 @@ curl http://localhost:3001/api/metrics | jq '.metrics.days[] | select(.tasksComp
 
 # Calculate total commits this week
 curl http://localhost:3001/api/metrics | jq '.metrics.summary.commits'
+```
+
+### GET /api/services
+
+Returns health status of all agent services with response times and availability indicators.
+
+**Response:**
+```json
+{
+  "services": [
+    {
+      "name": "Agent Tools",
+      "url": "http://localhost:3000/health",
+      "status": "healthy",
+      "responseTimeMs": 45,
+      "timestamp": "2026-03-29T15:53:00.000Z"
+    },
+    {
+      "name": "Agent Dashboard",
+      "url": "http://localhost:3001/health",
+      "status": "healthy",
+      "responseTimeMs": 12,
+      "timestamp": "2026-03-29T15:53:00.000Z"
+    },
+    {
+      "name": "Agent Scheduler",
+      "url": "http://localhost:3002/health",
+      "status": "down",
+      "responseTimeMs": null,
+      "timestamp": "2026-03-29T15:53:00.000Z",
+      "error": "Connection refused - service may be down"
+    }
+  ],
+  "summary": {
+    "total": 3,
+    "healthy": 2,
+    "slow": 0,
+    "down": 1
+  },
+  "timestamp": "2026-03-29T15:53:00.000Z"
+}
+```
+
+**Service Status Codes:**
+- `healthy`: Response time < 500ms (green indicator)
+- `slow`: Response time 500-2000ms (yellow indicator)
+- `down`: Response time > 2000ms, timeout, or error (red indicator)
+
+**Examples:**
+```bash
+# Get all services health status
+curl http://localhost:3001/api/services
+
+# Get summary statistics
+curl http://localhost:3001/api/services | jq '.summary'
+
+# List only down services
+curl http://localhost:3001/api/services | jq '.services[] | select(.status == "down")'
+
+# Get healthy service count
+curl http://localhost:3001/api/services | jq '.summary.healthy'
+
+# Check specific service
+curl http://localhost:3001/api/services | jq '.services[] | select(.name == "Agent Tools")'
+
+# Get response times
+curl http://localhost:3001/api/services | jq '.services[] | {name, responseTimeMs}'
+
+# Check if all services are healthy
+curl http://localhost:3001/api/services | jq 'if .summary.down == 0 then "All services healthy" else "Some services down" end'
+```
+
+### GET /health
+
+Returns health status of the agent-dashboard service itself.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "service": "agent-dashboard",
+  "timestamp": "2026-03-29T15:53:00.000Z"
+}
+```
+
+**Examples:**
+```bash
+# Check dashboard health
+curl http://localhost:3001/health
+
+# Validate health status
+curl http://localhost:3001/health | jq '.status'
 ```
 
 ## Environment Variables

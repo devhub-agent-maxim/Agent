@@ -6,6 +6,7 @@ import { getWeeklyMetrics, formatDuration } from './lib/analytics';
 import matter from 'gray-matter';
 import { securityHeaders } from './middleware/security-headers';
 import { corsMiddleware } from './middleware/cors';
+import { checkAllServices } from './lib/service-health';
 
 const app = express();
 const PORT = 3001;
@@ -381,6 +382,19 @@ app.get('/api/metrics', (req: Request, res: Response) => {
   });
 });
 
+app.get('/api/services', async (req: Request, res: Response) => {
+  const healthStatus = await checkAllServices();
+  res.json(healthStatus);
+});
+
+app.get('/health', (req: Request, res: Response) => {
+  res.json({
+    status: 'healthy',
+    service: 'agent-dashboard',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Web UI
 app.get('/', (req: Request, res: Response) => {
   res.send(`<!DOCTYPE html>
@@ -534,11 +548,63 @@ app.get('/', (req: Request, res: Response) => {
     .success-rate-good { color: #3fb950; }
     .success-rate-fair { color: #d29922; }
     .success-rate-poor { color: #da3633; }
+    .service-status-card {
+      background: #0d1117;
+      padding: 16px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+      text-align: center;
+    }
+    .service-status-healthy { border-left: 4px solid #3fb950; }
+    .service-status-slow { border-left: 4px solid #d29922; }
+    .service-status-down { border-left: 4px solid #da3633; }
+    .service-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #c9d1d9;
+      margin-bottom: 8px;
+    }
+    .service-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+    .indicator-healthy { background: #3fb950; box-shadow: 0 0 8px #3fb950; }
+    .indicator-slow { background: #d29922; box-shadow: 0 0 8px #d29922; }
+    .indicator-down { background: #da3633; box-shadow: 0 0 8px #da3633; }
+    .service-response {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 8px 0;
+    }
+    .response-healthy { color: #3fb950; }
+    .response-slow { color: #d29922; }
+    .response-down { color: #da3633; }
+    .service-url {
+      font-size: 11px;
+      color: #7d8590;
+      font-family: 'Courier New', monospace;
+      margin-top: 4px;
+    }
+    .service-error {
+      font-size: 11px;
+      color: #da3633;
+      margin-top: 6px;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>🤖 Agent Dashboard</h1>
+
+    <!-- Service Health Section -->
+    <div class="card full-width">
+      <h2>🏥 Service Health</h2>
+      <div class="grid" id="service-health-grid"></div>
+    </div>
 
     <!-- Metrics Summary Section -->
     <div class="card full-width">
@@ -661,7 +727,8 @@ app.get('/', (req: Request, res: Response) => {
 
       try {
         // Fetch all endpoints in parallel
-        const [activityRes, workersRes, goalsRes, tasksRes, schedulesRes, metricsRes, memoryRes] = await Promise.all([
+        const [servicesRes, activityRes, workersRes, goalsRes, tasksRes, schedulesRes, metricsRes, memoryRes] = await Promise.all([
+          fetch('/api/services'),
           fetch('/api/recent-activity?count=10'),
           fetch('/api/workers'),
           fetch('/api/goals'),
@@ -671,7 +738,8 @@ app.get('/', (req: Request, res: Response) => {
           fetch('/api/memory')
         ]);
 
-        const [activity, workers, goals, tasks, schedules, metrics, memory] = await Promise.all([
+        const [services, activity, workers, goals, tasks, schedules, metrics, memory] = await Promise.all([
+          servicesRes.json(),
           activityRes.json(),
           workersRes.json(),
           goalsRes.json(),
@@ -680,6 +748,37 @@ app.get('/', (req: Request, res: Response) => {
           metricsRes.json(),
           memoryRes.json()
         ]);
+
+        // Service Health
+        const serviceHealthGrid = document.getElementById('service-health-grid');
+        if (services.services && services.services.length > 0) {
+          serviceHealthGrid.innerHTML = services.services.map(service => {
+            const statusClass = \`service-status-\${service.status}\`;
+            const indicatorClass = \`indicator-\${service.status}\`;
+            const responseClass = \`response-\${service.status}\`;
+
+            let statusText = '';
+            if (service.status === 'healthy') {
+              statusText = \`\${service.responseTimeMs}ms\`;
+            } else if (service.status === 'slow') {
+              statusText = \`\${service.responseTimeMs}ms (slow)\`;
+            } else {
+              statusText = 'Down';
+            }
+
+            return \`<div class="service-status-card \${statusClass}">
+              <div class="service-name">
+                <span class="service-indicator \${indicatorClass}"></span>
+                \${service.name}
+              </div>
+              <div class="service-response \${responseClass}">\${statusText}</div>
+              <div class="service-url">\${service.url}</div>
+              \${service.error ? \`<div class="service-error">\${service.error}</div>\` : ''}
+            </div>\`;
+          }).join('');
+        } else {
+          serviceHealthGrid.innerHTML = '<div class="empty-state">Unable to check service health</div>';
+        }
 
         // Metrics Summary
         if (metrics.metrics) {

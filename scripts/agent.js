@@ -453,6 +453,7 @@ async function dispatchCommand(chatId, thread, text, msgId) {
     const active = workers.listActive();
     const { pending, inProgress } = parseTasks(TASKS_FILE);
     const jobs = scheduler.list();
+    const sprintStatus = sprintMgr.getStatus();
 
     const lines = [
       '⚙️ *Agent Status*',
@@ -461,6 +462,15 @@ async function dispatchCommand(chatId, thread, text, msgId) {
       `• Tasks in progress: \`${inProgress.length}\``,
       `• Scheduled jobs: \`${jobs.length}\``,
     ];
+
+    // Sprint status
+    if (sprintStatus.active) {
+      lines.push('', '🏃 *Active Sprint:*');
+      lines.push(`  • Project: \`${sprintStatus.project}\``);
+      lines.push(`  • Running: \`${sprintStatus.elapsedMin}m\``);
+      lines.push(`  • Completed: \`${sprintStatus.tasksCompleted}\` tasks`);
+      lines.push(`  • Commits: \`${sprintStatus.commits}\``);
+    }
 
     if (active.length > 0) {
       lines.push('', '*Running Workers:*');
@@ -744,6 +754,45 @@ async function dailyBrief() {
   log('[Brief] Done.');
 }
 
+// ── Daily standup — sprint progress report ───────────────────────────────────
+
+async function dailyStandup() {
+  const sprintStatus = sprintMgr.getStatus();
+
+  if (!sprintStatus.active) {
+    log('[Standup] No active sprint — skipping standup');
+    return;
+  }
+
+  log('[Standup] Generating sprint standup...');
+  memory.log('Sprint standup started');
+
+  const gh = require('./lib/github-issues');
+  const boardUrl = gh.boardUrl();
+
+  // Get current backlog count
+  let backlogCount = 0;
+  try {
+    const backlog = await gh.getBacklog();
+    backlogCount = backlog.length;
+  } catch {}
+
+  const lines = [
+    '📊 *Daily Sprint Standup*',
+    '',
+    `🏃 *Project:* \`${sprintStatus.project}\``,
+    `⏱️ *Running:* ${sprintStatus.elapsedMin} minutes`,
+    `✅ *Completed:* ${sprintStatus.tasksCompleted} tasks`,
+    `🔀 *Commits:* ${sprintStatus.commits}`,
+    `📋 *Remaining:* ${backlogCount} backlog items`,
+    '',
+    `[View Sprint Board](${boardUrl})`,
+  ];
+
+  await notify(lines.join('\n'));
+  memory.log(`Sprint standup sent — ${sprintStatus.tasksCompleted} tasks completed, ${backlogCount} remaining`);
+}
+
 // ── Nightly consolidation — runs at 2:00 AM ───────────────────────────────────
 
 async function nightlyConsolidation() {
@@ -927,6 +976,19 @@ async function main() {
     }
   });
   log('[Scheduler] Intel scraper registered — daily at 08:00');
+
+  // Register daily sprint standup at 9:00 AM
+  scheduler.scheduleDaily('sprint-standup', 9, 0, async () => {
+    log('[Standup] Running daily sprint standup...');
+    try {
+      await dailyStandup();
+      log('[Standup] Done');
+    } catch (err) {
+      log(`[Standup] Error: ${err.message}`);
+      await notify(`⚠️ *Sprint standup error:* ${err.message}`);
+    }
+  });
+  log('[Scheduler] Sprint standup registered — daily at 09:00');
 
   // Start live dashboard HTTP server
   const dashPort = parseInt(process.env.DASHBOARD_PORT || '3000', 10);
