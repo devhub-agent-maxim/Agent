@@ -5,11 +5,19 @@ import schedulesRouter from './routes/schedules';
 import { SchedulerWorker } from './workers/scheduler-worker';
 import path from 'path';
 import { Server } from 'http';
+import { securityHeaders } from './middleware/security-headers';
+import { corsMiddleware } from './middleware/cors';
 
 dotenv.config();
 
 const app: Express = express();
 const port = process.env.PORT || 3002;
+
+// Security headers middleware - must be first for all responses
+app.use(securityHeaders);
+
+// CORS middleware - must be before routes
+app.use(corsMiddleware);
 
 // Middleware
 app.use(express.json());
@@ -76,7 +84,9 @@ async function start() {
   }
 }
 
-// Start the application
-start();
+// Only start the application if running directly (not during tests)
+if (require.main === module) {
+  start();
+}
 
 export { app, server, schedulerWorker };

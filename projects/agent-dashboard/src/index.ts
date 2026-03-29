@@ -4,10 +4,18 @@ import fs from 'fs';
 import { execSync } from 'child_process';
 import { getWeeklyMetrics, formatDuration } from './lib/analytics';
 import matter from 'gray-matter';
+import { securityHeaders } from './middleware/security-headers';
+import { corsMiddleware } from './middleware/cors';
 
 const app = express();
 const PORT = 3001;
 const ROOT = path.resolve(__dirname, '..', '..', '..');
+
+// Security headers middleware - must be first for all responses
+app.use(securityHeaders);
+
+// CORS middleware - must be before routes
+app.use(corsMiddleware);
 
 // Helper: Read goals from memory/goals.md
 function readGoals(): { active: string[]; waiting: string[]; completed: string[] } {

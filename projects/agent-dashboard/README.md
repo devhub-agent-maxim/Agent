@@ -506,6 +506,89 @@ curl http://localhost:3001/api/metrics | jq '.metrics.days[] | select(.tasksComp
 curl http://localhost:3001/api/metrics | jq '.metrics.summary.commits'
 ```
 
+## Environment Variables
+
+Create a `.env` file:
+
+```env
+PORT=3001
+CORS_ALLOWED_ORIGINS=https://dashboard.example.com,https://app.example.com
+```
+
+### CORS Configuration
+
+The API includes CORS (Cross-Origin Resource Sharing) middleware to control which origins can access the dashboard endpoints.
+
+**Default allowed origins (development):**
+- `http://localhost:3000`
+- `http://localhost:3001`
+- `http://localhost:3002`
+- `http://127.0.0.1:3000`
+- `http://127.0.0.1:3001`
+- `http://127.0.0.1:3002`
+
+**Production configuration:**
+
+Set the `CORS_ALLOWED_ORIGINS` environment variable with a comma-separated list of allowed origins:
+
+```bash
+CORS_ALLOWED_ORIGINS=https://dashboard.example.com,https://app.example.com
+```
+
+**CORS features:**
+- ✅ Credentials support (cookies and authorization headers)
+- ✅ Preflight request caching (24 hours)
+- ✅ Allowed methods: GET, POST, PUT, DELETE, PATCH, OPTIONS
+- ✅ Allowed headers: Content-Type, Authorization, X-Requested-With, Accept, Origin
+- ✅ Exposed headers: X-Request-Id
+
+**Example CORS request:**
+
+```bash
+curl -X GET http://localhost:3001/api/status \
+  -H "Origin: http://localhost:3000"
+```
+
+## Security
+
+The dashboard uses **helmet** middleware to set comprehensive security headers that protect against common web vulnerabilities.
+
+### Security Headers
+
+All endpoints include the following security headers:
+
+| Header | Value | Protection |
+|--------|-------|------------|
+| `Content-Security-Policy` | Dashboard-optimized CSP with inline script/style support | Prevents XSS and data injection attacks |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` | Forces HTTPS connections for 1 year |
+| `X-Frame-Options` | `DENY` | Prevents clickjacking by blocking iframe embedding |
+| `X-Content-Type-Options` | `nosniff` | Prevents MIME type sniffing attacks |
+| `X-DNS-Prefetch-Control` | `off` | Disables DNS prefetching for privacy |
+| `X-Download-Options` | `noopen` | Prevents IE from executing downloads in site context |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Controls referrer information leakage |
+| `X-Permitted-Cross-Domain-Policies` | `none` | Restricts Adobe Flash/PDF cross-domain access |
+
+**Additional Protections:**
+- ✅ `X-Powered-By` header removed (server fingerprinting prevention)
+- ✅ CSP allows inline scripts/styles for dashboard functionality
+- ✅ CSP includes `frame-ancestors 'none'` (clickjacking protection)
+- ✅ HSTS preload flag enabled (browser HSTS preload list inclusion)
+
+**Verify Security Headers:**
+```bash
+# Check all security headers
+curl -I http://localhost:3001/api/status | grep -E "(Content-Security|Strict-Transport|X-Frame|X-Content-Type|X-DNS|Referrer|X-Permitted)"
+
+# Expected output includes:
+# content-security-policy: default-src 'self'; script-src 'self' 'unsafe-inline'...
+# strict-transport-security: max-age=31536000; includeSubDomains; preload
+# x-frame-options: DENY
+# x-content-type-options: nosniff
+# x-dns-prefetch-control: off
+# referrer-policy: strict-origin-when-cross-origin
+# x-permitted-cross-domain-policies: none
+```
+
 ## Testing
 
 ```bash

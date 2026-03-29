@@ -183,6 +183,42 @@ Create a `.env` file (see `.env.example`):
 ```env
 PORT=3002
 DATABASE_PATH=./data/scheduler.db
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://scheduler.example.com
+```
+
+### CORS Configuration
+
+The API includes CORS (Cross-Origin Resource Sharing) middleware to control which origins can access the endpoints.
+
+**Default allowed origins (development):**
+- `http://localhost:3000`
+- `http://localhost:3001`
+- `http://localhost:3002`
+- `http://127.0.0.1:3000`
+- `http://127.0.0.1:3001`
+- `http://127.0.0.1:3002`
+
+**Production configuration:**
+
+Set the `CORS_ALLOWED_ORIGINS` environment variable with a comma-separated list of allowed origins:
+
+```bash
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://scheduler.example.com
+```
+
+**CORS features:**
+- ✅ Credentials support (cookies and authorization headers)
+- ✅ Preflight request caching (24 hours)
+- ✅ Allowed methods: GET, POST, PUT, DELETE, PATCH, OPTIONS
+- ✅ Allowed headers: Content-Type, Authorization, X-Requested-With, Accept, Origin
+- ✅ Exposed headers: X-Request-Id
+
+**Example CORS request:**
+
+```bash
+curl -X GET http://localhost:3002/schedules \
+  -H "Origin: http://localhost:3000" \
+  -H "Authorization: Bearer your-token"
 ```
 
 ## Database Schema
