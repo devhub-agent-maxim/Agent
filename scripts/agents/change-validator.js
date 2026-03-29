@@ -136,9 +136,72 @@ async function reviewWithClaude(diff, workerId, workerOutput) {
   };
 }
 
+// ── Extract worker completion message from daily log ─────────────────────────
+
+/**
+ * Extract the actual "Worker done:" message from today's daily log.
+ * Returns the summary portion after the workerId, or null if not found.
+ *
+ * @param {string} workerId - Worker ID to find (e.g., "AUTO-1774768974469")
+ * @returns {string|null}
+ */
+function extractWorkerMessage(workerId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const dailyFile = path.join(ROOT, 'memory', 'daily', `${today}.md`);
+
+  if (!fs.existsSync(dailyFile)) return null;
+
+  const content = fs.readFileSync(dailyFile, 'utf8');
+  // Match: "- HH:MM:SS am/pm — Worker done: AUTO-1774768974469 — <summary>"
+  const pattern = new RegExp(`Worker done: ${workerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} — (.+?)(?:\n|$)`, 'i');
+  const match = content.match(pattern);
+
+  return match ? match[1].trim() : null;
+}
+
 // ── Generate commit message ───────────────────────────────────────────────────
 
-async function generateCommitMessage(diff, workerSummary) {
+async function generateCommitMessage(diff, workerSummary, workerId) {
+  // First, try to extract the actual worker completion message from daily log
+  const workerMessage = extractWorkerMessage(workerId);
+
+  // If we have a worker message, use it directly to create a commit message
+  if (workerMessage && workerMessage.length > 20 && !workerMessage.includes('timed out')) {
+    // Extract the key action from the message
+    // Examples:
+    // "Added 500+ line Deployment Guide..." → "feat: add deployment guide to README"
+    // "Created PR #2 merging claude/serene-lamarr..." → "feat: create PR for production API stack"
+    // "Fixed analytics test failures..." → "fix: analytics test timezone handling"
+
+    const msg = workerMessage.slice(0, 200).toLowerCase();
+    let type = 'chore';
+
+    if (msg.match(/^(added|add|created|create|implemented?|built?|scaffold)/)) type = 'feat';
+    else if (msg.match(/^(fixed?|fix|resolved?|corrected?)/)) type = 'fix';
+    else if (msg.match(/^(refactor|restructur|reorganiz)/)) type = 'refactor';
+    else if (msg.match(/^(updat|modif|chang|enhanc|improv)/)) type = 'feat';
+    else if (msg.match(/^(test|verified?|validated?)/)) type = 'test';
+    else if (msg.match(/^(document|doc|added.*documentation)/)) type = 'docs';
+
+    // Create a concise version of the worker message
+    let summary = workerMessage
+      .replace(/^(Added|Created|Fixed|Updated|Modified|Changed|Enhanced|Improved|Tested|Verified|Validated|Implemented|Built|Scaffolded)\s+/i, '')
+      .replace(/\s+to\s+projects\/[^\s]+/g, '')  // Remove "to projects/X"
+      .replace(/\s+in\s+projects\/[^\s]+/g, '')  // Remove "in projects/X"
+      .replace(/\s+with\s+\d+\s+tests/gi, '')    // Remove "with N tests"
+      .replace(/✅/g, '')
+      .trim();
+
+    // Truncate and lowercase
+    if (summary.length > 65) {
+      summary = summary.slice(0, 65).replace(/\s+\S*$/, ''); // Remove partial word at end
+    }
+
+    const commitMsg = `${type}: ${summary.charAt(0).toLowerCase()}${summary.slice(1)}`;
+    return commitMsg.slice(0, 72);
+  }
+
+  // Fallback: use Claude to generate commit message (with timeout protection)
   const prompt = [
     'Generate a concise git commit message for these changes.',
     'Format: "<type>: <what was done>"',
@@ -154,6 +217,14 @@ async function generateCommitMessage(diff, workerSummary) {
   ].join('\n');
 
   const result = await runClaude(prompt, { timeoutMs: 30000, model: 'sonnet' });
+
+  // Check if Claude timed out or failed
+  if (!result.success || result.output.includes('timed out')) {
+    // Use worker summary as fallback
+    const summary = (workerSummary || 'completed work').slice(0, 50).toLowerCase();
+    return `chore: ${summary}`;
+  }
+
   const lines = (result.output || '').split('\n').filter(l => l.trim());
   const msg = lines[lines.length - 1]?.trim() || `chore: worker ${Date.now()} completed`;
   // Strip quotes if Claude wrapped it
@@ -204,7 +275,7 @@ async function validate(workerId, workerOutput, notifyFns = {}) {
 
   if (valid) {
     try {
-      commitMsg = await generateCommitMessage(diff, workerOutput.slice(0, 300));
+      commitMsg = await generateCommitMessage(diff, workerOutput.slice(0, 300), workerId);
       const commitResult = gitOps.commitAll(
         `${commitMsg}\n\nWorker: ${workerId}\nScore: ${score}/10\n\nCo-Authored-By: claude-flow <ruv@ruv.net>`
       );

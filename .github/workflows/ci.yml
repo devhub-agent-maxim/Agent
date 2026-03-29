@@ -40,6 +40,10 @@ jobs:
         working-directory: projects/${{ matrix.project }}
         run: npm install
 
+      - name: Security audit
+        working-directory: projects/${{ matrix.project }}
+        run: npm audit --audit-level=high
+
       - name: Run tests
         working-directory: projects/${{ matrix.project }}
         run: npm test
