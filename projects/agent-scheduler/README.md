@@ -181,9 +181,36 @@ The scheduler supports standard cron expressions with 5 or 6 fields:
 Create a `.env` file (see `.env.example`):
 
 ```env
+# Optional: Server port (default: 3002)
 PORT=3002
+
+# Optional: SQLite database file path (default: data/scheduler.db)
 DATABASE_PATH=./data/scheduler.db
+
+# Optional: Comma-separated list of allowed CORS origins
 CORS_ALLOWED_ORIGINS=https://app.example.com,https://scheduler.example.com
+```
+
+### Environment Variable Validation
+
+The application validates environment variables at startup before the server starts. If validation fails, the application will exit with code 1 and display clear error messages.
+
+**All variables are optional** - the scheduler will use sensible defaults if not provided.
+
+**Optional variables with validation:**
+- `PORT` - Must be a valid number between 1 and 65535 (default: 3002)
+- `DATABASE_PATH` - Must be a valid file path (default: data/scheduler.db)
+- `CORS_ALLOWED_ORIGINS` - Must be valid HTTP/HTTPS URLs (comma-separated)
+
+**Example validation errors:**
+```
+Environment validation failed:
+  - PORT must be between 1 and 65535, got: 99999
+  - CORS_ALLOWED_ORIGINS contains invalid URL: not-a-url
+  - DATABASE_PATH contains invalid null character
+
+Please set the required environment variables and try again.
+See README.md for configuration details.
 ```
 
 ### CORS Configuration

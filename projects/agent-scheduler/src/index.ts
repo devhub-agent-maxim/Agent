@@ -7,8 +7,12 @@ import path from 'path';
 import { Server } from 'http';
 import { securityHeaders } from './middleware/security-headers';
 import { corsMiddleware } from './middleware/cors';
+import { validateEnvironmentOrExit } from './lib/env-validator';
 
 dotenv.config();
+
+// Validate environment variables before starting
+validateEnvironmentOrExit();
 
 const app: Express = express();
 const port = process.env.PORT || 3002;

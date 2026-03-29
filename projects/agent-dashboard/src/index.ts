@@ -7,6 +7,10 @@ import matter from 'gray-matter';
 import { securityHeaders } from './middleware/security-headers';
 import { corsMiddleware } from './middleware/cors';
 import { checkAllServices } from './lib/service-health';
+import { validateEnvironmentOrExit } from './lib/env-validator';
+
+// Validate environment variables before starting
+validateEnvironmentOrExit();
 
 const app = express();
 const PORT = 3001;

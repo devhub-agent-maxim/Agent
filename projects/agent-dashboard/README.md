@@ -604,8 +604,40 @@ curl http://localhost:3001/health | jq '.status'
 Create a `.env` file:
 
 ```env
+# Required: URL of the agent-tools API service
+AGENT_TOOLS_URL=http://localhost:3000
+
+# Required: URL of the agent-scheduler API service
+AGENT_SCHEDULER_URL=http://localhost:3002
+
+# Optional: Server port (default: 3001)
 PORT=3001
+
+# Optional: Comma-separated list of allowed CORS origins
 CORS_ALLOWED_ORIGINS=https://dashboard.example.com,https://app.example.com
+```
+
+### Environment Variable Validation
+
+The application validates environment variables at startup before the server starts. If validation fails, the application will exit with code 1 and display clear error messages.
+
+**Required variables:**
+- `AGENT_TOOLS_URL` - Must be a valid HTTP/HTTPS URL pointing to the agent-tools service
+- `AGENT_SCHEDULER_URL` - Must be a valid HTTP/HTTPS URL pointing to the agent-scheduler service
+
+**Optional variables with validation:**
+- `PORT` - Must be a valid number between 1 and 65535
+- `CORS_ALLOWED_ORIGINS` - Must be valid HTTP/HTTPS URLs (comma-separated)
+
+**Example validation errors:**
+```
+Environment validation failed:
+  - AGENT_TOOLS_URL environment variable is required but not set
+  - AGENT_SCHEDULER_URL contains invalid URL: not-a-url
+  - PORT must be between 1 and 65535, got: 99999
+
+Please set the required environment variables and try again.
+See README.md for configuration details.
 ```
 
 ### CORS Configuration

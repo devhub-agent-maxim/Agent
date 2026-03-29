@@ -9,6 +9,10 @@ import { requestLogger } from './middleware/request-logger';
 import { corsMiddleware } from './middleware/cors-config';
 import { securityHeaders } from './middleware/security-headers';
 import { logger } from './utils/logger';
+import { validateEnvironmentOrExit } from './lib/env-validator';
+
+// Validate environment variables before starting
+validateEnvironmentOrExit();
 
 const app = express();
 const PORT = process.env.PORT || 3000;

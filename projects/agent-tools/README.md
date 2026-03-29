@@ -44,9 +44,35 @@ LOG_LEVEL=info
 
 # Optional: Comma-separated list of allowed CORS origins (default: localhost variants in dev)
 CORS_ALLOWED_ORIGINS=https://app.example.com,https://dashboard.example.com
+
+# Optional: SQLite database file path (default: data/todos.db)
+DATABASE_PATH=data/todos.db
 ```
 
 **Important**: Never commit your `.env` file to version control. API keys are sensitive credentials.
+
+#### Environment Variable Validation
+
+The application validates environment variables at startup before the server starts. If validation fails, the application will exit with code 1 and display clear error messages.
+
+**Required variables:**
+- `API_KEYS` - Must contain at least one key of 16+ characters (comma-separated for multiple keys)
+
+**Optional variables with validation:**
+- `PORT` - Must be a valid number between 1 and 65535
+- `CORS_ALLOWED_ORIGINS` - Must be valid HTTP/HTTPS URLs (comma-separated)
+- `DATABASE_PATH` - Must be a valid file path
+
+**Example validation errors:**
+```
+Environment validation failed:
+  - API_KEYS environment variable is required but not set
+  - PORT must be between 1 and 65535, got: 99999
+  - CORS_ALLOWED_ORIGINS contains invalid URL: not-a-url
+
+Please set the required environment variables and try again.
+See README.md for configuration details.
+```
 
 ### Running the Server
 
