@@ -8,11 +8,11 @@
  *   3. Ask Sonnet to review the diff and score it 1-10
  *   4. Generate 3 specific suggestions for what to work on next
  *   5. Auto-commit + push if changes look good (score ≥ 6 or tests pass)
- *   6. Create/update Jira ticket
- *   7. Send formatted change report to Telegram (what changed, score, suggestions)
+ *   6. Create GitHub Issue (in-progress → done) for task tracking
+ *   7. Send structured standup to Telegram with issue link
  *
  * Called by agent.js worker completion handler.
- * Returns { committed, sha, score, suggestions, jiraKey }
+ * Returns { committed, sha, score, suggestions, issueUrl }
  */
 
 'use strict';
@@ -24,7 +24,7 @@ const path          = require('path');
 const fs            = require('fs');
 
 const gitOps        = require('../lib/git-ops');
-const jira          = require('../lib/jira');
+const gh            = require('../lib/github-issues');
 const { runClaude } = require('../lib/claude-runner');
 const memory        = require('../lib/memory');
 
@@ -166,7 +166,7 @@ async function generateCommitMessage(diff, workerSummary) {
  * @param {string} workerId       - ID of the completed worker
  * @param {string} workerOutput   - Full text output from the worker
  * @param {object} notifyFns      - { notifyMain, notifyIntel } from agent.js
- * @returns {Promise<{committed: boolean, sha: string|null, score: number, suggestions: string[], jiraKey: string|null}>}
+ * @returns {Promise<{committed: boolean, sha: string|null, score: number, suggestions: string[], issueUrl: string|null}>}
  */
 async function validate(workerId, workerOutput, notifyFns = {}) {
   const { notifyMain } = notifyFns;
@@ -178,7 +178,7 @@ async function validate(workerId, workerOutput, notifyFns = {}) {
   // No changes — nothing to do
   if (changedFiles.length === 0) {
     log('No file changes detected — skipping validation');
-    return { committed: false, sha: null, score: null, suggestions: [], jiraKey: null };
+    return { committed: false, sha: null, score: null, suggestions: [], issueUrl: null };
   }
 
   log(`${changedFiles.length} file(s) changed: ${changedFiles.map(f => f.file).join(', ')}`);
@@ -231,68 +231,82 @@ async function validate(workerId, workerOutput, notifyFns = {}) {
     memory.log(`Worker ${workerId} changes NOT committed: score ${score}/10, tests: ${testResult.passed}`);
   }
 
-  // Step 5: Jira
-  let jiraKey = null;
-  if (committed && jira.isConfigured()) {
+  // Step 5: GitHub Issue tracking
+  let issueUrl  = null;
+  let issueNum  = null;
+  const suggestions = review?.suggestions || [];
+
+  if (gh.isConfigured()) {
     try {
-      const issue = await jira.createIssue(
-        commitMsg || `Agent work: ${workerId}`,
-        [
-          `Worker: ${workerId}`,
-          `Commit: ${sha || 'n/a'}`,
-          `Score: ${score}/10`,
-          '',
-          review?.summary || workerOutput.slice(0, 300),
-          '',
-          testResult.output,
-        ].join('\n')
-      );
-      if (issue?.key) {
-        jiraKey = issue.key;
-        log(`Jira ticket created: ${issue.key} — ${issue.url}`);
+      const issueTitle = commitMsg || review?.summary || `Agent sprint: ${workerId}`;
+      const issueBody  = [
+        review?.summary || workerOutput.slice(0, 300),
+        '',
+        `**Files changed:** ${changedFiles.length}`,
+        testResult.output !== '(no tests configured)' ? `**Tests:** ${testResult.output.slice(0, 200)}` : '',
+      ].filter(Boolean).join('\n');
+
+      const issue = await gh.createIssue(issueTitle, issueBody, workerId);
+      if (issue) {
+        issueNum = issue.number;
+        issueUrl = issue.url;
+        log(`GitHub Issue #${issueNum} created`);
+
+        if (committed) {
+          // Count passing tests from output
+          const testMatch = testResult.output.match(/(\d+)\s+pass/i);
+          const testCount = testMatch ? testMatch[1] : null;
+          await gh.closeIssue(issueNum, sha, review?.summary || 'Completed', score, testCount);
+          log(`GitHub Issue #${issueNum} closed as done`);
+        } else {
+          await gh.blockIssue(issueNum, `Score ${score}/10 — changes not committed`);
+        }
       }
     } catch (err) {
-      log(`Jira error: ${err.message}`);
+      log(`GitHub Issues error: ${err.message}`);
     }
   }
 
-  // Step 6: Send Telegram report
-  const suggestions = review?.suggestions || [];
+  // Step 6: Structured Telegram standup
   if (notifyMain) {
-    const scoreEmoji = score >= 8 ? '🟢' : score >= 6 ? '🟡' : '🔴';
+    const scoreEmoji  = score >= 8 ? '🟢' : score >= 6 ? '🟡' : '🔴';
+    const timeStr     = new Date().toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const branch      = gitOps.getBranch();
+    const testLine    = testResult.passed
+      ? `✅ Tests: ${testResult.output.replace(/\n.*/s, '').slice(0, 60)}`
+      : `❌ Tests failed`;
+
     const lines = [
       committed
-        ? `✅ *Changes committed & pushed*`
-        : `⚠️ *Changes NOT committed* (score too low or tests failed)`,
-      '',
-      `🔧 *Worker:* \`${workerId}\``,
-      `${scoreEmoji} *Quality score:* ${score}/10`,
-      review?.summary ? `📝 *What changed:* ${review.summary}` : '',
-      sha ? `🔀 *Commit:* \`${sha}\` → \`${gitOps.getBranch()}\`` : '',
-      jiraKey ? `🎫 *Jira:* \`${jiraKey}\`` : '',
-      '',
-      '*Changed files:*',
-      changedFiles.slice(0, 8).map(f => `  • \`${f.file}\``).join('\n'),
-      '',
+        ? `🤖 *Sprint Complete* — ${timeStr}`
+        : `⚠️ *Sprint Not Committed* — ${timeStr}`,
+      '━━━━━━━━━━━━━━━━━━━',
+      review?.summary ? `📦 ${review.summary}` : '',
+      `${scoreEmoji} Score: ${score}/10  |  ${testLine}`,
+      sha ? `🔀 \`${sha}\` → \`${branch}\`` : '',
+      issueUrl ? `📋 [Issue #${issueNum}](${issueUrl})` : '',
+      '━━━━━━━━━━━━━━━━━━━',
     ];
 
     if (!testResult.passed) {
-      lines.push(`❌ *Tests failed:*\n\`\`\`\n${testResult.output.slice(0, 400)}\n\`\`\``, '');
+      lines.push(`\`\`\`\n${testResult.output.slice(0, 300)}\n\`\`\``);
     }
 
     if (review?.issues) {
-      lines.push(`⚠️ *Issues found:* ${review.issues}`, '');
+      lines.push(`⚠️ ${review.issues}`);
     }
 
     if (suggestions.length > 0) {
-      lines.push('💡 *Suggestions for next work:*');
-      suggestions.forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
+      lines.push('💡 *Next:*');
+      suggestions.slice(0, 3).forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
     }
 
-    await notifyMain(lines.filter(l => l !== undefined).join('\n'));
+    lines.push(`📊 [Board](${gh.boardUrl()})`);
+
+    await notifyMain(lines.filter(l => l !== undefined && l !== '').join('\n'));
   }
 
-  return { committed, sha, score, suggestions, jiraKey };
+  return { committed, sha, score, suggestions, issueUrl };
 }
 
 module.exports = { validate };
