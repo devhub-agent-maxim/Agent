@@ -39,6 +39,7 @@ const workers    = require('./lib/workers');
 const { decide } = require('./lib/decider');
 const scheduler  = require('./lib/scheduler');
 const { orch, queueTask, getSprintState } = require('./lib/orchestrator');
+const discord = require('./lib/discord');
 const {
   parseTasks,
   addTask,
@@ -812,6 +813,8 @@ async function main() {
   scheduler.scheduleDaily('standup', 9, 0, () => {
     log('[Standup] Running daily scrum...');
     orch.emit('schedule', { name: 'standup' });
+    // Also post to Discord
+    discord.standupSummary(getSprintState()).catch(err => log(`[Standup] Discord error: ${err.message}`));
   });
   log('[Scheduler] Standup registered — daily at 09:00');
 

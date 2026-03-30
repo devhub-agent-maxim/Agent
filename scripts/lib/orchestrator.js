@@ -31,6 +31,8 @@ const { runClaude }  = require('./claude-runner');
 const workers        = require('./workers');
 const memory         = require('./memory');
 const trello         = require('./trello');
+const ghTracker      = require('./github-tracker');
+const discord        = require('./discord');
 
 const ROOT         = path.resolve(__dirname, '..', '..');
 const SPRINT_FILE  = path.join(ROOT, 'memory', 'sprint', 'current.json');
@@ -62,6 +64,8 @@ function sprintAddQueue(task) {
     state.queue.push({ ...task, queuedAt: new Date().toISOString() });
     writeSprint(state);
     trello.syncTask({ id: task.id, prompt: task.prompt, stage: 'queued' }).catch(() => {});
+    ghTracker.syncTask({ id: task.id, prompt: task.prompt, stage: 'queued' }).catch(() => {});
+    discord.notify({ id: task.id, prompt: task.prompt, stage: 'queued' }).catch(() => {});
   }
 }
 
@@ -76,6 +80,8 @@ function sprintStartTask(taskId) {
     state.pipeline.currentTask = taskId;
     writeSprint(state);
     trello.syncTask({ id: task.id, prompt: task.prompt, stage: 'working' }).catch(() => {});
+    ghTracker.syncTask({ id: task.id, prompt: task.prompt, stage: 'working' }).catch(() => {});
+    discord.notify({ id: task.id, prompt: task.prompt, stage: 'working' }).catch(() => {});
     return task;
   }
   return null;
@@ -96,6 +102,8 @@ function sprintCompleteTask(taskId, summary, stage = 'done') {
     }
     writeSprint(state);
     trello.syncTask({ id: task.id, prompt: task.prompt, stage, summary }).catch(() => {});
+    ghTracker.syncTask({ id: task.id, prompt: task.prompt, stage, summary }).catch(() => {});
+    discord.notify({ id: task.id, prompt: task.prompt, stage, summary }).catch(() => {});
   }
 }
 
@@ -114,7 +122,11 @@ function sprintBlockTask(taskId, reason) {
   if (state.active.length === 0) state.pipeline.stage = 'idle';
   writeSprint(state);
   const blocked = state.blocked[state.blocked.length - 1];
-  if (blocked) trello.syncTask({ id: blocked.id, prompt: blocked.prompt, stage: 'blocked', summary: blocked.blockReason }).catch(() => {});
+  if (blocked) {
+    trello.syncTask({ id: blocked.id, prompt: blocked.prompt, stage: 'blocked', summary: blocked.blockReason }).catch(() => {});
+    ghTracker.syncTask({ id: blocked.id, prompt: blocked.prompt, stage: 'blocked', summary: blocked.blockReason }).catch(() => {});
+    discord.notify({ id: blocked.id, prompt: blocked.prompt, stage: 'blocked', summary: blocked.blockReason }).catch(() => {});
+  }
 }
 
 // ── Lean context builder ──────────────────────────────────────────────────────
