@@ -30,6 +30,7 @@ const path         = require('path');
 const { runClaude }  = require('./claude-runner');
 const workers        = require('./workers');
 const memory         = require('./memory');
+const trello         = require('./trello');
 
 const ROOT         = path.resolve(__dirname, '..', '..');
 const SPRINT_FILE  = path.join(ROOT, 'memory', 'sprint', 'current.json');
@@ -54,6 +55,7 @@ function sprintAddQueue(task) {
   if (!state.queue.find(t => t.id === task.id)) {
     state.queue.push({ ...task, queuedAt: new Date().toISOString() });
     writeSprint(state);
+    trello.syncTask({ id: task.id, prompt: task.prompt, stage: 'queued' }).catch(() => {});
   }
 }
 
@@ -67,6 +69,7 @@ function sprintStartTask(taskId) {
     state.pipeline.stage = 'working';
     state.pipeline.currentTask = taskId;
     writeSprint(state);
+    trello.syncTask({ id: task.id, prompt: task.prompt, stage: 'working' }).catch(() => {});
     return task;
   }
   return null;
@@ -86,6 +89,7 @@ function sprintCompleteTask(taskId, summary, stage = 'done') {
       state.pipeline.currentTask = null;
     }
     writeSprint(state);
+    trello.syncTask({ id: task.id, prompt: task.prompt, stage, summary }).catch(() => {});
   }
 }
 
@@ -103,6 +107,8 @@ function sprintBlockTask(taskId, reason) {
   });
   if (state.active.length === 0) state.pipeline.stage = 'idle';
   writeSprint(state);
+  const blocked = state.blocked[state.blocked.length - 1];
+  if (blocked) trello.syncTask({ id: blocked.id, prompt: blocked.prompt, stage: 'blocked', summary: blocked.blockReason }).catch(() => {});
 }
 
 // ── Lean context builder ──────────────────────────────────────────────────────

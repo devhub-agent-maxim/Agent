@@ -81,11 +81,11 @@ memory.log(`Demo triggered: ${DEMO_TASK.id}`);
 
 queueTask(DEMO_TASK.id, DEMO_TASK.prompt, DEMO_TASK.projectName);
 
-// Exit after 10 minutes max regardless
+// Exit after 15 minutes max
 setTimeout(() => {
   if (!done) {
-    console.log('\n⏱️  Demo timeout (10 min). Check memory/sprint/current.json for state.');
+    console.log('\n⏱️  Demo timeout (15 min). Check memory/sprint/current.json for state.');
     printSprintState();
   }
   process.exit(0);
-}, 600000);
+}, 900000);
