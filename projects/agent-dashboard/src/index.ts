@@ -8,6 +8,7 @@ import { securityHeaders } from './middleware/security-headers';
 import { corsMiddleware } from './middleware/cors';
 import { checkAllServices } from './lib/service-health';
 import { validateEnvironmentOrExit } from './lib/env-validator';
+import { getGitHubIssuesKanban, getGitHubRepoInfo } from './lib/github-issues';
 
 // Validate environment variables before starting
 validateEnvironmentOrExit();
@@ -391,6 +392,44 @@ app.get('/api/services', async (req: Request, res: Response) => {
   res.json(healthStatus);
 });
 
+app.get('/api/github-issues', async (req: Request, res: Response) => {
+  try {
+    const repoInfo = getGitHubRepoInfo(ROOT);
+
+    if (!repoInfo) {
+      return res.json({
+        success: false,
+        error: 'Unable to determine GitHub repository',
+        kanban: { backlog: [], inProgress: [], done: [] },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const kanban = await getGitHubIssuesKanban(repoInfo.owner, repoInfo.repo);
+
+    res.json({
+      success: true,
+      owner: repoInfo.owner,
+      repo: repoInfo.repo,
+      kanban,
+      summary: {
+        backlog: kanban.backlog.length,
+        inProgress: kanban.inProgress.length,
+        done: kanban.done.length,
+        total: kanban.backlog.length + kanban.inProgress.length + kanban.done.length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.json({
+      success: false,
+      error: error.message,
+      kanban: { backlog: [], inProgress: [], done: [] },
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 app.get('/health', (req: Request, res: Response) => {
   res.json({
     status: 'healthy',
@@ -598,6 +637,232 @@ app.get('/', (req: Request, res: Response) => {
       margin-top: 6px;
       font-style: italic;
     }
+    .kanban-columns {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .kanban-column {
+      background: #0d1117;
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+    }
+    .kanban-header {
+      font-size: 14px;
+      font-weight: 600;
+      color: #c9d1d9;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #30363d;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .kanban-count {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #21262d;
+    }
+    .kanban-backlog { border-top: 3px solid #7d8590; }
+    .kanban-in-progress { border-top: 3px solid #58a6ff; }
+    .kanban-done { border-top: 3px solid #3fb950; }
+    .issue-card {
+      background: #161b22;
+      padding: 10px;
+      margin: 8px 0;
+      border-radius: 4px;
+      border-left: 3px solid #30363d;
+      font-size: 13px;
+      transition: transform 0.2s;
+    }
+    .issue-card:hover {
+      transform: translateX(2px);
+      border-left-color: #58a6ff;
+    }
+    .issue-number {
+      color: #7d8590;
+      font-weight: 600;
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+    .issue-title {
+      color: #c9d1d9;
+      line-height: 1.4;
+    }
+    .issue-labels {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .issue-label {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 10px;
+      background: #21262d;
+      color: #8b949e;
+    }
+    .worker-feed {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .worker-activity {
+      background: #161b22;
+      padding: 10px;
+      margin: 6px 0;
+      border-radius: 4px;
+      border-left: 3px solid #a371f7;
+      font-size: 13px;
+    }
+    .worker-activity-time {
+      font-size: 11px;
+      color: #7d8590;
+      margin-bottom: 4px;
+    }
+    .worker-activity-content {
+      color: #c9d1d9;
+      line-height: 1.4;
+    }
+
+    /* Mobile Responsive Styles */
+    @media (max-width: 768px) {
+      body {
+        padding: 12px;
+      }
+      h1 {
+        font-size: 22px;
+        margin-bottom: 15px;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 12px 0 8px;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 10px 0 6px;
+      }
+      .container {
+        max-width: 100%;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .kanban-columns {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .card {
+        padding: 12px;
+      }
+      .refresh-indicator {
+        top: 12px;
+        right: 12px;
+        padding: 6px 12px;
+        font-size: 11px;
+      }
+      .metric-value {
+        font-size: 24px;
+      }
+      .metric-label {
+        font-size: 11px;
+      }
+      .metric-sublabel {
+        font-size: 11px;
+      }
+      .service-status-card {
+        padding: 12px;
+      }
+      .service-response {
+        font-size: 16px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      body {
+        padding: 8px;
+      }
+      h1 {
+        font-size: 18px;
+        margin-bottom: 12px;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 10px 0 6px;
+      }
+      h3 {
+        font-size: 13px;
+        margin: 8px 0 5px;
+      }
+      .card {
+        padding: 10px;
+        border-radius: 4px;
+      }
+      .grid {
+        gap: 10px;
+      }
+      .log-entry {
+        font-size: 11px;
+        padding: 4px 0;
+      }
+      .worker-item, .schedule-item {
+        padding: 8px;
+        margin: 6px 0;
+      }
+      .item {
+        padding: 6px;
+        margin: 5px 0;
+        font-size: 12px;
+      }
+      .metric-card {
+        padding: 12px;
+      }
+      .metric-value {
+        font-size: 20px;
+        margin: 6px 0;
+      }
+      .metric-label {
+        font-size: 10px;
+      }
+      .metric-sublabel {
+        font-size: 10px;
+      }
+      .service-status-card {
+        padding: 10px;
+      }
+      .service-name {
+        font-size: 13px;
+      }
+      .service-response {
+        font-size: 14px;
+      }
+      .service-url {
+        font-size: 10px;
+      }
+      .status-badge {
+        padding: 3px 6px;
+        font-size: 10px;
+      }
+      .schedule-name {
+        font-size: 13px;
+      }
+      .schedule-details {
+        font-size: 11px;
+      }
+      .refresh-indicator {
+        top: 8px;
+        right: 8px;
+        padding: 5px 10px;
+        font-size: 10px;
+      }
+      .timestamp {
+        font-size: 11px;
+        margin-top: 12px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -630,6 +895,40 @@ app.get('/', (req: Request, res: Response) => {
           <div class="metric-sublabel" id="metric-commits">- commits</div>
         </div>
       </div>
+    </div>
+
+    <!-- Sprint Board (GitHub Issues Kanban) -->
+    <div class="card full-width" style="margin-top: 20px;">
+      <h2>📋 Sprint Board <span class="section-count" id="sprint-total">(0)</span></h2>
+      <div class="kanban-columns">
+        <div class="kanban-column kanban-backlog">
+          <div class="kanban-header">
+            <span>Backlog</span>
+            <span class="kanban-count" id="kanban-backlog-count">0</span>
+          </div>
+          <div id="kanban-backlog"></div>
+        </div>
+        <div class="kanban-column kanban-in-progress">
+          <div class="kanban-header">
+            <span>In Progress</span>
+            <span class="kanban-count" id="kanban-inprogress-count">0</span>
+          </div>
+          <div id="kanban-inprogress"></div>
+        </div>
+        <div class="kanban-column kanban-done">
+          <div class="kanban-header">
+            <span>Done</span>
+            <span class="kanban-count" id="kanban-done-count">0</span>
+          </div>
+          <div id="kanban-done"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Worker Activity Feed -->
+    <div class="card full-width" style="margin-top: 20px;">
+      <h2>👷 Worker Activity Feed <span class="section-count" id="worker-feed-count">(0)</span></h2>
+      <div class="worker-feed" id="worker-feed"></div>
     </div>
 
     <!-- Recent Activity Section -->
@@ -731,7 +1030,7 @@ app.get('/', (req: Request, res: Response) => {
 
       try {
         // Fetch all endpoints in parallel
-        const [servicesRes, activityRes, workersRes, goalsRes, tasksRes, schedulesRes, metricsRes, memoryRes] = await Promise.all([
+        const [servicesRes, activityRes, workersRes, goalsRes, tasksRes, schedulesRes, metricsRes, memoryRes, githubIssuesRes] = await Promise.all([
           fetch('/api/services'),
           fetch('/api/recent-activity?count=10'),
           fetch('/api/workers'),
@@ -739,10 +1038,11 @@ app.get('/', (req: Request, res: Response) => {
           fetch('/api/tasks'),
           fetch('/api/schedules'),
           fetch('/api/metrics?days=7'),
-          fetch('/api/memory')
+          fetch('/api/memory'),
+          fetch('/api/github-issues')
         ]);
 
-        const [services, activity, workers, goals, tasks, schedules, metrics, memory] = await Promise.all([
+        const [services, activity, workers, goals, tasks, schedules, metrics, memory, githubIssues] = await Promise.all([
           servicesRes.json(),
           activityRes.json(),
           workersRes.json(),
@@ -750,7 +1050,8 @@ app.get('/', (req: Request, res: Response) => {
           tasksRes.json(),
           schedulesRes.json(),
           metricsRes.json(),
-          memoryRes.json()
+          memoryRes.json(),
+          githubIssuesRes.json()
         ]);
 
         // Service Health
@@ -805,6 +1106,87 @@ app.get('/', (req: Request, res: Response) => {
 
           document.getElementById('metric-time').textContent = summary.avgCompletionTimeFormatted;
           document.getElementById('metric-commits').textContent = \`\${summary.commits} commits\`;
+        }
+
+        // GitHub Issues Kanban Board
+        if (githubIssues.success && githubIssues.kanban) {
+          const kanban = githubIssues.kanban;
+          const totalIssues = kanban.backlog.length + kanban.inProgress.length + kanban.done.length;
+          document.getElementById('sprint-total').textContent = \`(\${totalIssues})\`;
+          document.getElementById('kanban-backlog-count').textContent = kanban.backlog.length.toString();
+          document.getElementById('kanban-inprogress-count').textContent = kanban.inProgress.length.toString();
+          document.getElementById('kanban-done-count').textContent = kanban.done.length.toString();
+
+          // Render backlog issues
+          const backlogDiv = document.getElementById('kanban-backlog');
+          if (kanban.backlog.length === 0) {
+            backlogDiv.innerHTML = '<div class="empty-state">No backlog issues</div>';
+          } else {
+            backlogDiv.innerHTML = kanban.backlog.slice(0, 10).map(issue => \`
+              <div class="issue-card">
+                <div class="issue-number">#\${issue.number}</div>
+                <div class="issue-title">\${issue.title}</div>
+                \${issue.labels.length > 0 ? \`<div class="issue-labels">\${issue.labels.map(label => \`<span class="issue-label">\${label}</span>\`).join('')}</div>\` : ''}
+              </div>
+            \`).join('');
+          }
+
+          // Render in-progress issues
+          const inProgressDiv = document.getElementById('kanban-inprogress');
+          if (kanban.inProgress.length === 0) {
+            inProgressDiv.innerHTML = '<div class="empty-state">No issues in progress</div>';
+          } else {
+            inProgressDiv.innerHTML = kanban.inProgress.slice(0, 10).map(issue => \`
+              <div class="issue-card">
+                <div class="issue-number">#\${issue.number}</div>
+                <div class="issue-title">\${issue.title}</div>
+                \${issue.labels.length > 0 ? \`<div class="issue-labels">\${issue.labels.map(label => \`<span class="issue-label">\${label}</span>\`).join('')}</div>\` : ''}
+              </div>
+            \`).join('');
+          }
+
+          // Render done issues
+          const doneDiv = document.getElementById('kanban-done');
+          if (kanban.done.length === 0) {
+            doneDiv.innerHTML = '<div class="empty-state">No completed issues</div>';
+          } else {
+            doneDiv.innerHTML = kanban.done.slice(0, 10).map(issue => \`
+              <div class="issue-card">
+                <div class="issue-number">#\${issue.number}</div>
+                <div class="issue-title">\${issue.title}</div>
+                \${issue.labels.length > 0 ? \`<div class="issue-labels">\${issue.labels.map(label => \`<span class="issue-label">\${label}</span>\`).join('')}</div>\` : ''}
+              </div>
+            \`).join('');
+          }
+        } else {
+          document.getElementById('sprint-total').textContent = '(0)';
+          document.getElementById('kanban-backlog').innerHTML = '<div class="empty-state">Unable to fetch GitHub issues</div>';
+          document.getElementById('kanban-inprogress').innerHTML = '<div class="empty-state">Unable to fetch GitHub issues</div>';
+          document.getElementById('kanban-done').innerHTML = '<div class="empty-state">Unable to fetch GitHub issues</div>';
+        }
+
+        // Worker Activity Feed (enhanced from recent activity)
+        const workerFeedDiv = document.getElementById('worker-feed');
+        const workerActivities = activity.activity.filter(entry =>
+          entry.toLowerCase().includes('worker') ||
+          entry.toLowerCase().includes('spawning') ||
+          entry.toLowerCase().includes('spawned')
+        );
+        document.getElementById('worker-feed-count').textContent = \`(\${workerActivities.length})\`;
+        if (workerActivities.length === 0) {
+          workerFeedDiv.innerHTML = '<div class="empty-state">No recent worker activity</div>';
+        } else {
+          workerFeedDiv.innerHTML = workerActivities.map(entry => {
+            const timeMatch = entry.match(/^- (\\d+:\\d+:\\d+ [ap]m)/);
+            const time = timeMatch ? timeMatch[1] : '';
+            const content = entry.replace(/^- \\d+:\\d+:\\d+ [ap]m — /, '');
+            return \`
+              <div class="worker-activity">
+                <div class="worker-activity-time">\${time}</div>
+                <div class="worker-activity-content">\${content}</div>
+              </div>
+            \`;
+          }).join('');
         }
 
         // Recent Activity

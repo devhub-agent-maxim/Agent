@@ -464,5 +464,80 @@ describe('Agent Dashboard API', () => {
       expect(response.text).toContain('Scheduled Tasks');
       expect(response.text).toContain('schedules-count');
     });
+
+    it('should include sprint board section', async () => {
+      const response = await request(app).get('/');
+
+      expect(response.text).toContain('Sprint Board');
+      expect(response.text).toContain('sprint-total');
+      expect(response.text).toContain('kanban-backlog');
+      expect(response.text).toContain('kanban-inprogress');
+      expect(response.text).toContain('kanban-done');
+    });
+
+    it('should fetch github-issues endpoint in JavaScript', async () => {
+      const response = await request(app).get('/');
+
+      expect(response.text).toContain('/api/github-issues');
+    });
+  });
+
+  describe('GET /api/github-issues', () => {
+    it('should return JSON response with success field', async () => {
+      const response = await request(app).get('/api/github-issues');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('success');
+      expect(response.body).toHaveProperty('timestamp');
+    });
+
+    it('should return kanban board structure', async () => {
+      const response = await request(app).get('/api/github-issues');
+
+      expect(response.body).toHaveProperty('kanban');
+      expect(response.body.kanban).toHaveProperty('backlog');
+      expect(response.body.kanban).toHaveProperty('inProgress');
+      expect(response.body.kanban).toHaveProperty('done');
+      expect(Array.isArray(response.body.kanban.backlog)).toBe(true);
+      expect(Array.isArray(response.body.kanban.inProgress)).toBe(true);
+      expect(Array.isArray(response.body.kanban.done)).toBe(true);
+    });
+
+    it('should return summary with counts', async () => {
+      const response = await request(app).get('/api/github-issues');
+
+      if (response.body.success) {
+        expect(response.body).toHaveProperty('summary');
+        expect(response.body.summary).toHaveProperty('backlog');
+        expect(response.body.summary).toHaveProperty('inProgress');
+        expect(response.body.summary).toHaveProperty('done');
+        expect(response.body.summary).toHaveProperty('total');
+        expect(typeof response.body.summary.backlog).toBe('number');
+        expect(typeof response.body.summary.inProgress).toBe('number');
+        expect(typeof response.body.summary.done).toBe('number');
+        expect(typeof response.body.summary.total).toBe('number');
+      }
+    });
+
+    it('should return repo info on success', async () => {
+      const response = await request(app).get('/api/github-issues');
+
+      if (response.body.success) {
+        expect(response.body).toHaveProperty('owner');
+        expect(response.body).toHaveProperty('repo');
+        expect(typeof response.body.owner).toBe('string');
+        expect(typeof response.body.repo).toBe('string');
+      }
+    });
+
+    it('should handle errors gracefully', async () => {
+      const response = await request(app).get('/api/github-issues');
+
+      expect(response.status).toBe(200); // Should always return 200, even on error
+      if (!response.body.success) {
+        expect(response.body).toHaveProperty('error');
+        expect(typeof response.body.error).toBe('string');
+      }
+    });
   });
 });
