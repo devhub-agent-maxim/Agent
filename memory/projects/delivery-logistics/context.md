@@ -22,12 +22,12 @@
 
 ## Tasks
 - Full task list: `memory/projects/delivery-logistics/TASKS.md`
-- Phase 1 complete: project structure created
-- Next: tsconfig.json + deps install, then .env.example
+- Phases 1–4 complete as of 2026-03-28 (12/12 tests pass, build clean)
+- Next: Phase 5 — end-to-end test with real Google Maps API key
 
 ## Phase Progress
-- [x] Phase 1 — Project Foundation (structure created)
-- [ ] Phase 2 — Google Maps Integration
-- [ ] Phase 3 — Route Engine
-- [ ] Phase 4 — CLI Interface
-- [ ] Phase 5 — Integration & Polish
+- [x] Phase 1 — Project Foundation (package.json, tsconfig.json, jest.config.js, deps installed)
+- [x] Phase 2 — Google Maps Integration (client.ts, geocoder.ts, types.ts — 4 tests passing)
+- [x] Phase 3 — Route Engine (optimizer.ts, planner.ts — 6 tests passing)
+- [x] Phase 4 — CLI Interface (index.ts, reporter.ts — 2 tests passing)
+- [ ] Phase 5 — Integration & Polish (end-to-end with real API key)
