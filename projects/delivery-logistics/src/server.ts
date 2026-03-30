@@ -1,6 +1,4 @@
 import * as http from 'http';
-import * as path from 'path';
-import * as fs from 'fs';
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const START_TIME = Date.now();
@@ -38,11 +36,13 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`delivery-logistics API running on http://localhost:${PORT}`);
-  console.log(`  GET /ping    → health check`);
-  console.log(`  GET /health  → detailed health`);
-  console.log(`  GET /api/routes → route optimization API`);
-});
-
 export default server;
+
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`delivery-logistics API running on http://localhost:${PORT}`);
+    console.log(`  GET /ping    → health check`);
+    console.log(`  GET /health  → detailed health`);
+    console.log(`  GET /api/routes → route optimization API`);
+  });
+}

@@ -52,7 +52,13 @@ function writeSprint(state) {
 
 function sprintAddQueue(task) {
   const state = readSprint();
-  if (!state.queue.find(t => t.id === task.id)) {
+  const allIds = new Set([
+    ...state.queue.map(t => t.id),
+    ...state.active.map(t => t.id),
+    ...state.completed.map(t => t.id),
+    ...state.blocked.map(t => t.id),
+  ]);
+  if (!allIds.has(task.id)) {
     state.queue.push({ ...task, queuedAt: new Date().toISOString() });
     writeSprint(state);
     trello.syncTask({ id: task.id, prompt: task.prompt, stage: 'queued' }).catch(() => {});
