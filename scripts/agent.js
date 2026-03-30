@@ -38,6 +38,7 @@ const memory     = require('./lib/memory');
 const workers    = require('./lib/workers');
 const { decide } = require('./lib/decider');
 const scheduler  = require('./lib/scheduler');
+const { orch, queueTask, getSprintState } = require('./lib/orchestrator');
 const {
   parseTasks,
   addTask,
@@ -74,12 +75,10 @@ const GROUP_ID  = config.telegram.groupId;
 const API_BASE  = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 // ── Telegram topic thread IDs (Dev Projects Hub) ──────────────────────────────
-// Social Monitor topic — thread ID 4 (confirmed via message link)
 const THREAD_SOCIAL_MONITOR = parseInt(process.env.TELEGRAM_SOCIAL_MONITOR_THREAD_ID || '4', 10);
-// New Project topic — set TELEGRAM_NEW_PROJECT_THREAD_ID in .env once you have it
-const THREAD_NEW_PROJECT = process.env.TELEGRAM_NEW_PROJECT_THREAD_ID
-  ? parseInt(process.env.TELEGRAM_NEW_PROJECT_THREAD_ID, 10)
-  : null;
+const THREAD_NEW_PROJECT    = process.env.TELEGRAM_NEW_PROJECT_THREAD_ID ? parseInt(process.env.TELEGRAM_NEW_PROJECT_THREAD_ID, 10) : null;
+const THREAD_WORKERS        = process.env.TELEGRAM_WORKERS_THREAD_ID     ? parseInt(process.env.TELEGRAM_WORKERS_THREAD_ID, 10)     : null;
+const THREAD_ERRORS         = process.env.TELEGRAM_ERRORS_THREAD_ID      ? parseInt(process.env.TELEGRAM_ERRORS_THREAD_ID, 10)      : null;
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 const LOG_FILE = path.join(require('os').tmpdir(), 'agent.log');
@@ -137,9 +136,19 @@ async function sendMsg(chatId, text, threadId) {
   }
 }
 
-/** Notify Maxim on the main group */
+/** Notify Maxim on the main group (general topic) */
 async function notify(text) {
   await sendMsg(GROUP_ID, text, null);
+}
+
+/** Post to Workers topic — worker start, complete, and task updates */
+async function notifyWorkers(text) {
+  await sendMsg(GROUP_ID, text, THREAD_WORKERS || null);
+}
+
+/** Post to Errors topic — blocked workers and failures */
+async function notifyErrors(text) {
+  await sendMsg(GROUP_ID, text, THREAD_ERRORS || null);
 }
 
 /** Post intel digest to Social Monitor topic */
@@ -309,9 +318,11 @@ function buildChatPrompt(chatId, threadId, userText) {
 workers.onComplete((workerId, output, structured) => {
   log(`✅ Worker done: ${workerId}`);
 
-  const summary = structured?.summary || output.slice(0, 500);
+  const summary   = structured?.summary || output.slice(0, 500);
   const isBlocked = structured?.status === 'blocked';
-  const emoji   = isBlocked ? '🚫' : '✅';
+  const nextAction = structured?.nextAction
+    ? `\n\n*Next action needed:* ${structured.nextAction}`
+    : '';
 
   // Update TASKS.md if this was a queued task
   if (workerId.match(/^TASK-\d+$/)) {
@@ -326,17 +337,37 @@ workers.onComplete((workerId, output, structured) => {
     }
   }
 
-  // Notify Maxim
-  const nextAction = structured?.nextAction
-    ? `\n\n*Next action needed:* ${structured.nextAction}`
-    : '';
-  notify(`${emoji} *${workerId} complete*\n${summary}${nextAction}`);
+  if (isBlocked) {
+    notifyErrors(`🚫 *${workerId} blocked*\n${summary}${nextAction}`);
+  } else {
+    notifyWorkers(`✅ *${workerId} done*\n${summary}${nextAction}`);
+  }
 });
 
 workers.onError((workerId, errorMsg) => {
   log(`❌ Worker error: ${workerId} — ${errorMsg}`);
   memory.log(`Worker error: ${workerId} — ${errorMsg}`);
-  notify(`❌ *Worker failed:* \`${workerId}\`\n${errorMsg}`);
+  notifyErrors(`❌ *Worker failed:* \`${workerId}\`\n${errorMsg}`);
+});
+
+// ── Orchestrator event bridge ─────────────────────────────────────────────────
+
+orch.on('notify', ({ text, threadId }) => {
+  sendMsg(GROUP_ID, text, threadId || null).catch(() => {});
+});
+
+orch.on('pipelineDone', ({ taskId, summary }) => {
+  log(`[Orch] Pipeline done: ${taskId}`);
+  notifyWorkers(`✅ *Pipeline done:* \`${taskId}\`\n${summary.slice(0, 300)}`).catch(() => {});
+});
+
+orch.on('reviewFail', ({ taskId, issues }) => {
+  const detail = issues.map(i => `[${i.severity}] ${i.issue}`).join('\n').slice(0, 300);
+  notifyErrors(`🚫 *Review FAIL:* \`${taskId}\`\n${detail}`).catch(() => {});
+});
+
+orch.on('stageError', ({ taskId, stage, error }) => {
+  notifyErrors(`⚠️ *Stage error:* \`${taskId}\` @ ${stage}\n${error.slice(0, 200)}`).catch(() => {});
 });
 
 // ── Telegram message handler ──────────────────────────────────────────────────
@@ -381,6 +412,7 @@ async function dispatchCommand(chatId, thread, text, msgId) {
       '',
       '*Status commands:*',
       '`/status`    — Active workers + queue overview',
+      '`/sprint`    — Orchestrator pipeline state (queue/active/done/blocked)',
       '`/tasks`     — Full task queue (TASKS.md)',
       '`/goals`     — Current goals',
       '`/workers`   — Running background workers',
@@ -515,6 +547,20 @@ async function dispatchCommand(chatId, thread, text, msgId) {
     return;
   }
 
+  // ── /sprint ───────────────────────────────────────────────────────────────
+  if (text === '/sprint') {
+    const s = getSprintState();
+    const lines = [
+      `🏃 *Sprint:* ${s.sprint?.goal || 'none'}`,
+      `Queue: ${s.queue.length} · Active: ${s.active.length} · Done: ${s.completed.length} · Blocked: ${s.blocked.length}`,
+    ];
+    if (s.active.length > 0)  lines.push('', '*Active:*',  ...s.active.map(t  => `⚡ \`${t.id}\` — ${(t.prompt || '').slice(0, 60)}`));
+    if (s.blocked.length > 0) lines.push('', '*Blocked:*', ...s.blocked.map(t => `⚠️ \`${t.id}\` — ${(t.blockReason || '').slice(0, 60)}`));
+    if (s.completed.slice(-3).length > 0) lines.push('', '*Recently done:*', ...s.completed.slice(-3).map(t => `✅ \`${t.id}\` — ${(t.summary || '').slice(0, 60)}`));
+    await sendMsg(chatId, lines.join('\n'), thread);
+    return;
+  }
+
   // ── /clear ────────────────────────────────────────────────────────────────
   if (text === '/clear') {
     convHistory.delete(threadKey(chatId, thread));
@@ -528,9 +574,11 @@ async function dispatchCommand(chatId, thread, text, msgId) {
     const desc  = taskMatch[1].trim();
     const newId = addTask(TASKS_FILE, desc);
     memory.log(`Task queued via Telegram: ${newId} — ${desc}`);
+    // Also route through the event-driven orchestrator pipeline
+    queueTask(newId, desc);
     await sendMsg(
       chatId,
-      `✅ *Task queued:* \`${newId}\`\n${desc}\n\n_I'll pick it up on the next work cycle (~10 min)._`,
+      `✅ *Task queued:* \`${newId}\`\n${desc}\n\n_Pipeline starting now..._`,
       thread
     );
     return;
@@ -626,7 +674,7 @@ async function workLoop() {
   memory.log(`Spawning worker: ${workerId} — ${decision.prompt.slice(0, 80)}`);
   log(`[Work] Spawning worker: ${workerId}`);
 
-  notify(`🚀 *Starting:* \`${workerId}\`\n${decision.prompt.slice(0, 200)}`);
+  notifyWorkers(`🚀 *Starting:* \`${workerId}\`\n${decision.prompt.slice(0, 200)}`);
 
   workers.spawnWorker(workerId, decision.prompt);
 }
@@ -760,6 +808,13 @@ async function main() {
   scheduler.scheduleDaily('nightly', 2, 0, nightlyConsolidation);
   log('[Scheduler] Nightly consolidation registered — daily at 02:00');
 
+  // Register daily standup at 9:00 AM
+  scheduler.scheduleDaily('standup', 9, 0, () => {
+    log('[Standup] Running daily scrum...');
+    orch.emit('schedule', { name: 'standup' });
+  });
+  log('[Scheduler] Standup registered — daily at 09:00');
+
   // Register daily intel scraper at 8:00 AM
   scheduler.scheduleDaily('intel-scraper', 8, 0, async () => {
     log('[Intel] Morning brief starting...');
@@ -804,12 +859,12 @@ async function main() {
     : `Set TELEGRAM_NEW_PROJECT_THREAD_ID in .env to enable idea cards`;
   await notify(
     `✅ *Agent online* — ${new Date().toLocaleString()}\n` +
-    `Work loop: every 10 min\n` +
+    `Work loop: every 10 min · Standup: 09:00 AM\n` +
     `Nightly: 02:00 AM · Intel: 08:00 AM\n` +
     `Intel digest → Social Monitor topic (thread ${THREAD_SOCIAL_MONITOR})\n` +
     `${newProjectNote}\n` +
     `Dashboard: http://localhost:${dashPort}/?token=${dashToken}\n` +
-    `Say \`/help\` for commands.`
+    `\`/sprint\` for pipeline state · \`/help\` for all commands.`
   );
 
   log('Agent online. Starting Telegram polling...\n');

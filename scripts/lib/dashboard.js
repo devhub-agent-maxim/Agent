@@ -59,6 +59,22 @@ function start(opts) {
       return;
     }
 
+    if (url.pathname === '/api/sprint') {
+      // Public — no auth required (org chart page uses this)
+      res.writeHead(200, {
+        'Content-Type':  'application/json',
+        'Cache-Control': 'no-cache',
+        'Access-Control-Allow-Origin': '*',
+      });
+      try {
+        const { readSprint } = require('./orchestrator');
+        res.end(JSON.stringify(readSprint(), null, 2));
+      } catch (_) {
+        res.end(JSON.stringify({ error: 'sprint state unavailable' }));
+      }
+      return;
+    }
+
     if (url.pathname === '/' || url.pathname === '/index.html') {
       const html = buildHtml(token, port);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

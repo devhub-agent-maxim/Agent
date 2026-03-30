@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "updatedAt": "2026-03-30T00:00:00.000Z",
+  "sprint": {
+    "id": "sprint-001",
+    "startedAt": "2026-03-30T00:00:00.000Z",
+    "goal": "Bootstrap autonomous agent system: orchestrator, team routing, demo use case"
+  },
+  "queue": [],
+  "active": [],
+  "completed": [],
+  "blocked": [],
+  "pipeline": {
+    "stage": "idle",
+    "currentTask": null,
+    "lastEvent": null
+  }
+}

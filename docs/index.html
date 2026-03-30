@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevHub Agent — Team Org Chart</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --purple: #bc8cff;
+    --red: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+    min-height: 100vh;
+  }
+  header {
+    text-align: center;
+    padding: 24px 0 32px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+  header h1 { font-size: 1.6rem; color: var(--accent); margin-bottom: 6px; }
+  header p  { color: var(--muted); font-size: 0.9rem; }
+  .status-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: #1a3a1a;
+    color: var(--green);
+    border: 1px solid var(--green);
+    margin-top: 8px;
+  }
+
+  /* Sprint summary bar */
+  #sprint-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 32px;
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .sprint-stat { text-align: center; }
+  .sprint-stat .num  { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+  .sprint-stat .label { font-size: 0.75rem; color: var(--muted); }
+  #sprint-goal { flex: 1; min-width: 200px; color: var(--muted); font-size: 0.85rem; font-style: italic; }
+
+  /* Org chart */
+  .org { display: flex; flex-direction: column; gap: 32px; }
+
+  .tier { }
+  .tier-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 12px;
+    padding-left: 4px;
+  }
+  .agents {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .agent-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    transition: border-color 0.2s, transform 0.1s;
+    cursor: default;
+  }
+  .agent-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .agent-card.active { border-color: var(--green); box-shadow: 0 0 0 1px var(--green)22; }
+  .agent-card.blocked { border-color: var(--red); }
+
+  .agent-name { font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; color: var(--text); }
+  .agent-role { font-size: 0.75rem; color: var(--muted); margin-bottom: 8px; }
+  .agent-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 20px;
+  }
+  .agent-status.idle    { background: #1c2128; color: var(--muted); }
+  .agent-status.active  { background: #1a3a1a; color: var(--green); }
+  .agent-status.blocked { background: #3a1a1a; color: var(--red); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .dot.idle    { background: var(--muted); }
+  .dot.active  { background: var(--green); animation: pulse 1.5s infinite; }
+  .dot.blocked { background: var(--red); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
+  }
+
+  /* Connector lines */
+  .connector {
+    text-align: center;
+    color: var(--border);
+    font-size: 1.2rem;
+    margin: 4px 0;
+  }
+
+  footer {
+    margin-top: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.75rem;
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  #last-updated { font-size: 0.72rem; color: var(--muted); text-align: right; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 DevHub Agent</h1>
+  <p>Autonomous 24-agent system — multi-project orchestration</p>
+  <div class="status-badge">● ONLINE</div>
+</header>
+
+<div id="sprint-bar">
+  <div id="sprint-goal">Loading sprint state...</div>
+  <div class="sprint-stat"><div class="num" id="stat-queue">—</div><div class="label">Queue</div></div>
+  <div class="sprint-stat"><div class="num" id="stat-active" style="color:var(--green)">—</div><div class="label">Active</div></div>
+  <div class="sprint-stat"><div class="num" id="stat-done">—</div><div class="label">Done</div></div>
+  <div class="sprint-stat"><div class="num" id="stat-blocked" style="color:var(--red)">—</div><div class="label">Blocked</div></div>
+</div>
+
+<div class="org">
+
+  <!-- Tier 1: Orchestrators -->
+  <div class="tier">
+    <div class="tier-title">Orchestrators (Tier 1)</div>
+    <div class="agents">
+      <div class="agent-card" id="agent-tech-lead">
+        <div class="agent-name">Tech Lead</div>
+        <div class="agent-role">Sprint planner · Superpowers pipeline driver</div>
+        <span class="agent-status idle"><span class="dot idle"></span>Idle</span>
+      </div>
+      <div class="agent-card" id="agent-project-analyst">
+        <div class="agent-name">Project Analyst</div>
+        <div class="agent-role">Stack detection · Agent routing</div>
+        <span class="agent-status idle"><span class="dot idle"></span>Idle</span>
+      </div>
+      <div class="agent-card" id="agent-team-configurator">
+        <div class="agent-name">Team Configurator</div>
+        <div class="agent-role">Team assembly · Pipeline config</div>
+        <span class="agent-status idle"><span class="dot idle"></span>Idle</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector">↓</div>
+
+  <!-- Tier 2: Core Quality Gates -->
+  <div class="tier">
+    <div class="tier-title">Core — Always in Pipeline (Tier 2)</div>
+    <div class="agents">
+      <div class="agent-card" id="agent-code-archaeologist">
+        <div class="agent-name">Code Archaeologist</div>
+        <div class="agent-role">Reads before any change · Context builder</div>
+        <span class="agent-status idle"><span class="dot idle"></span>Idle</span>
+      </div>
+      <div class="agent-card" id="agent-code-reviewer">
+        <div class="agent-name">Code Reviewer</div>
+        <div class="agent-role">CRITICAL/HIGH/MEDIUM/LOW · Commit gate</div>
+        <span class="agent-status idle"><span class="dot idle"></span>Idle</span>
+      </div>
+      <div class="agent-card" id="agent-performance-optimizer">
+        <div class="agent-name">Performance Optimizer</div>
+        <div class="agent-role">N+1 queries · Bundle size · Slow renders</div>
+        <span class="agent-status idle"><span class="dot idle"></span>Idle</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector">↓</div>
+
+  <!-- Tier 3: Specialists -->
+  <div class="tier">
+    <div class="tier-title">Framework Specialists — Auto-routed by stack (Tier 3)</div>
+    <div class="agents">
+      <div class="agent-card"><div class="agent-name">Next.js Expert</div><div class="agent-role">SSR · App Router · RSC</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">React Components</div><div class="agent-role">Hooks · State · Performance</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Vue Components</div><div class="agent-role">Composition API · Pinia</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Nuxt Expert</div><div class="agent-role">SSR · Composables · Modules</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Vue State</div><div class="agent-role">Pinia · Vuex migration</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Laravel Backend</div><div class="agent-role">Eloquent · Auth · API</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Laravel Eloquent</div><div class="agent-role">ORM · Query builder · Relations</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Django Backend</div><div class="agent-role">DRF · Auth · Admin</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Django API</div><div class="agent-role">Serializers · ViewSets</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Django ORM</div><div class="agent-role">Models · Migrations · Queries</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Rails Backend</div><div class="agent-role">MVC · Routes · Gems</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Rails API</div><div class="agent-role">JSON:API · Auth · Versioning</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Rails ActiveRecord</div><div class="agent-role">Relations · Scopes · Callbacks</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+    </div>
+  </div>
+
+  <div class="connector">↓</div>
+
+  <!-- Tier 4: Universal -->
+  <div class="tier">
+    <div class="tier-title">Universal Experts — Any stack (Tier 4)</div>
+    <div class="agents">
+      <div class="agent-card"><div class="agent-name">Node Backend</div><div class="agent-role">Express · Fastify · Async patterns</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Frontend Developer</div><div class="agent-role">Vanilla JS · Web APIs · Accessibility</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">API Architect</div><div class="agent-role">REST · OpenAPI · GraphQL · Versioning</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+      <div class="agent-card"><div class="agent-name">Tailwind Frontend</div><div class="agent-role">Utility-first · Responsive · Dark mode</div><span class="agent-status idle"><span class="dot idle"></span>Idle</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div id="last-updated"></div>
+
+<footer>
+  <p>
+    <a href="https://github.com/devhub-agent-maxim/Agent" target="_blank">GitHub</a> ·
+    Powered by <a href="https://claude.ai" target="_blank">Claude Sonnet 4.6</a> ·
+    <span id="footer-time"></span>
+  </p>
+</footer>
+
+<script>
+// Try to load sprint state from the dashboard API if running locally
+// Falls back to static display if not available
+async function loadSprint() {
+  try {
+    // Dashboard serves sprint state at /api/sprint when running locally
+    const res = await fetch('/api/sprint', { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return;
+    const s = await res.json();
+    document.getElementById('sprint-goal').textContent = s.sprint?.goal || 'No active sprint';
+    document.getElementById('stat-queue').textContent   = s.queue?.length ?? '—';
+    document.getElementById('stat-active').textContent  = s.active?.length ?? '—';
+    document.getElementById('stat-done').textContent    = s.completed?.length ?? '—';
+    document.getElementById('stat-blocked').textContent = s.blocked?.length ?? '—';
+
+    // Mark active agent cards
+    (s.active || []).forEach(task => {
+      const card = document.getElementById(`agent-${task.specialist || ''}`);
+      if (card) {
+        card.classList.add('active');
+        card.querySelector('.agent-status').className = 'agent-status active';
+        card.querySelector('.agent-status').innerHTML = '<span class="dot active"></span>Working';
+      }
+    });
+  } catch (_) {
+    document.getElementById('sprint-goal').textContent = 'Agent dashboard offline — run node scripts/agent.js';
+  }
+}
+
+document.getElementById('last-updated').textContent = 'Last updated: ' + new Date().toLocaleString();
+document.getElementById('footer-time').textContent  = new Date().getFullYear();
+
+loadSprint();
+setInterval(loadSprint, 30000);
+</script>
+</body>
+</html>

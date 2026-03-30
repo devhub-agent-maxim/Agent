@@ -107,7 +107,7 @@ function spawnWorker(workerId, taskPrompt, opts = {}) {
     const { MODELS } = (() => {
       try { return require('./claude-runner'); } catch { return { MODELS: {} }; }
     })();
-    const resolvedModel = { sonnet: 'claude-sonnet-4-5', opus: 'claude-opus-4-6', haiku: 'claude-haiku-4-5-20251001' }[model] ?? model;
+    const resolvedModel = { sonnet: 'claude-sonnet-4-6', opus: 'claude-opus-4-6', haiku: 'claude-haiku-4-5-20251001' }[model] ?? model;
 
     child = spawn(
       claudeCmd,
