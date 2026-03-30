@@ -2,12 +2,17 @@
 /**
  * Daily Intel Scraper — Morning Brief
  *
- * Sources (all tested and working):
+ * Sources:
  *   1. YouTube RSS     — raycfu, nateliason (real channel IDs)
  *   2. Reddit JSON     — r/ClaudeAI, r/AutonomousAgents, r/LocalLLaMA, r/MachineLearning
  *   3. GitHub API      — ruvnet/claude-flow, anthropics/claude-code releases
  *   4. Hacker News RSS — filtered for AI/agent content
  *   5. Direct fetch    — raycfu.com, openclaw.report
+ *   6. Twitter/X API   — @nateliason, @raycfu, @ruvnet, @anthropicai + hashtags
+ *   7. TikTok API      — trending videos in #AI, #coding, #automation (via RapidAPI)
+ *   8. Instagram API   — @raycfu posts/reels (Graph API)
+ *   9. LinkedIn API    — posts from key people/companies
+ *   10. Substack RSS   — Nat Eliason's newsletter (creatoreconomy.so)
  *
  * Then runs Sonnet usefulness-filter: only items scoring ≥7/10 reach Telegram.
  *
@@ -198,6 +203,375 @@ const SUBREDDITS = [
   { name: 'MachineLearning',   since: 86400 },
 ];
 
+// ── Source 6: Twitter/X API v2 ────────────────────────────────────────────────
+
+async function scrapeTwitter(lastSeen) {
+  const items = [];
+  const bearerToken = config.social?.twitter?.bearerToken || config.twitter?.bearerToken;
+
+  if (!bearerToken) {
+    log('Twitter: no bearer token — skipping');
+    return items;
+  }
+
+  const handles = config.social?.twitter?.handles || ['nateliason', 'raycfu', 'ruvnet', 'anthropicai'];
+
+  for (const handle of handles) {
+    const key = `twitter_${handle}`;
+    const since = lastSeen[key] ? lastSeen[key] : null;
+
+    try {
+      // First, get user ID from username
+      const userUrl = `https://api.twitter.com/2/users/by/username/${handle}`;
+      const userData = await httpGet(userUrl, {
+        'Authorization': `Bearer ${bearerToken}`,
+      });
+      const userId = JSON.parse(userData).data?.id;
+
+      if (!userId) {
+        log(`Twitter/@${handle}: user not found`);
+        continue;
+      }
+
+      // Get recent tweets (max 10)
+      const tweetsUrl = `https://api.twitter.com/2/users/${userId}/tweets?max_results=10&tweet.fields=created_at,public_metrics&exclude=retweets,replies`;
+      const tweetsData = await httpGet(tweetsUrl, {
+        'Authorization': `Bearer ${bearerToken}`,
+      });
+
+      const tweets = JSON.parse(tweetsData).data || [];
+      let newest = since;
+      let count = 0;
+
+      for (const tweet of tweets) {
+        const tweetId = tweet.id;
+        if (!since || tweetId > since) {
+          items.push({
+            source: `Twitter/@${handle}`,
+            title: tweet.text.slice(0, 200),
+            url: `https://twitter.com/${handle}/status/${tweetId}`,
+            date: tweet.created_at,
+            engagement: tweet.public_metrics?.like_count || 0,
+          });
+          if (!newest || tweetId > newest) newest = tweetId;
+          count++;
+        }
+      }
+
+      lastSeen[key] = newest || since;
+      log(`Twitter/@${handle}: ${count} new tweets`);
+    } catch (e) {
+      log(`Twitter/@${handle} failed: ${e.message}`);
+    }
+  }
+
+  // Also monitor hashtags
+  const hashtags = config.social?.twitter?.hashtags || ['ClaudeCode', 'OpenClaw', 'AgenticAI'];
+  for (const hashtag of hashtags) {
+    const key = `twitter_tag_${hashtag}`;
+    const since = lastSeen[key] ? lastSeen[key] : null;
+
+    try {
+      const searchUrl = `https://api.twitter.com/2/tweets/search/recent?query=%23${hashtag}&max_results=10&tweet.fields=created_at,public_metrics,author_id`;
+      const searchData = await httpGet(searchUrl, {
+        'Authorization': `Bearer ${bearerToken}`,
+      });
+
+      const tweets = JSON.parse(searchData).data || [];
+      let newest = since;
+      let count = 0;
+
+      for (const tweet of tweets) {
+        const tweetId = tweet.id;
+        if (!since || tweetId > since) {
+          items.push({
+            source: `Twitter/#${hashtag}`,
+            title: tweet.text.slice(0, 200),
+            url: `https://twitter.com/i/web/status/${tweetId}`,
+            date: tweet.created_at,
+            engagement: tweet.public_metrics?.like_count || 0,
+          });
+          if (!newest || tweetId > newest) newest = tweetId;
+          count++;
+        }
+      }
+
+      lastSeen[key] = newest || since;
+      log(`Twitter/#${hashtag}: ${count} new tweets`);
+    } catch (e) {
+      log(`Twitter/#${hashtag} failed: ${e.message}`);
+    }
+  }
+
+  return items;
+}
+
+// ── Source 7: TikTok Trends (via RapidAPI) ───────────────────────────────────
+
+async function scrapeTikTok(lastSeen) {
+  const items = [];
+  const rapidApiKey = config.social?.tiktok?.rapidApiKey || config.tiktok?.rapidApiKey;
+
+  if (!rapidApiKey) {
+    log('TikTok: no RapidAPI key — skipping');
+    return items;
+  }
+
+  const hashtags = config.social?.tiktok?.hashtags || ['AI', 'coding', 'automation'];
+
+  for (const hashtag of hashtags) {
+    const key = `tiktok_${hashtag}`;
+    const since = lastSeen[key] ? new Date(lastSeen[key]) : new Date(Date.now() - 86400000); // 24h ago
+
+    try {
+      // Use TikTok API via RapidAPI to search hashtag
+      const searchUrl = `https://tiktok-scraper7.p.rapidapi.com/hashtag/posts?hashtag=${encodeURIComponent(hashtag)}&count=20`;
+      const searchData = await httpGet(searchUrl, {
+        'X-RapidAPI-Key': rapidApiKey,
+        'X-RapidAPI-Host': 'tiktok-scraper7.p.rapidapi.com',
+      });
+
+      const response = JSON.parse(searchData);
+      const videos = response.data?.videos || response.videos || [];
+      let newest = since;
+      let count = 0;
+
+      for (const video of videos.slice(0, 10)) {
+        const videoId = video.video_id || video.id || video.aweme_id;
+        const createTime = video.create_time || video.createTime;
+        const videoDate = createTime ? new Date(createTime * 1000) : new Date(0);
+
+        if (videoDate > since && videoId) {
+          const videoUrl = video.share_url || video.video_url || `https://www.tiktok.com/@${video.author?.uniqueId || 'user'}/video/${videoId}`;
+          items.push({
+            source: `TikTok/#${hashtag}`,
+            title: (video.desc || video.title || 'TikTok video').slice(0, 200),
+            url: videoUrl,
+            date: videoDate.toISOString(),
+            videoId: videoId,
+            engagement: video.statistics?.diggCount || video.stats?.diggCount || 0,
+          });
+          if (videoDate > newest) newest = videoDate;
+          count++;
+        }
+      }
+
+      lastSeen[key] = newest.toISOString();
+      log(`TikTok/#${hashtag}: ${count} new videos`);
+    } catch (e) {
+      log(`TikTok/#${hashtag} failed: ${e.message}`);
+    }
+  }
+
+  // Also monitor specific creators
+  const creators = config.social?.tiktok?.creators || [];
+  for (const creator of creators) {
+    const key = `tiktok_user_${creator}`;
+    const since = lastSeen[key] ? new Date(lastSeen[key]) : new Date(Date.now() - 86400000 * 3); // 3 days ago
+
+    try {
+      const userUrl = `https://tiktok-scraper7.p.rapidapi.com/user/posts?username=${creator}&count=10`;
+      const userData = await httpGet(userUrl, {
+        'X-RapidAPI-Key': rapidApiKey,
+        'X-RapidAPI-Host': 'tiktok-scraper7.p.rapidapi.com',
+      });
+
+      const response = JSON.parse(userData);
+      const videos = response.data?.videos || response.videos || [];
+      let newest = since;
+      let count = 0;
+
+      for (const video of videos) {
+        const videoId = video.video_id || video.id || video.aweme_id;
+        const createTime = video.create_time || video.createTime;
+        const videoDate = createTime ? new Date(createTime * 1000) : new Date(0);
+
+        if (videoDate > since && videoId) {
+          const videoUrl = video.share_url || video.video_url || `https://www.tiktok.com/@${creator}/video/${videoId}`;
+          items.push({
+            source: `TikTok/@${creator}`,
+            title: (video.desc || video.title || 'TikTok video').slice(0, 200),
+            url: videoUrl,
+            date: videoDate.toISOString(),
+            videoId: videoId,
+            engagement: video.statistics?.diggCount || video.stats?.diggCount || 0,
+          });
+          if (videoDate > newest) newest = videoDate;
+          count++;
+        }
+      }
+
+      lastSeen[key] = newest.toISOString();
+      log(`TikTok/@${creator}: ${count} new videos`);
+    } catch (e) {
+      log(`TikTok/@${creator} failed: ${e.message}`);
+    }
+  }
+
+  return items;
+}
+
+// ── Source 8: Instagram (Graph API) ──────────────────────────────────────────
+
+async function scrapeInstagram(lastSeen) {
+  const items = [];
+  const accessToken = config.social?.instagram?.accessToken || config.instagram?.accessToken;
+
+  if (!accessToken) {
+    log('Instagram: no access token — skipping');
+    return items;
+  }
+
+  const handles = config.social?.instagram?.handles || ['raycfu'];
+
+  for (const handle of handles) {
+    const key = `instagram_${handle}`;
+    const since = lastSeen[key] ? lastSeen[key] : null;
+
+    try {
+      // First get user ID (requires business/creator account)
+      const userUrl = `https://graph.instagram.com/v18.0/me?fields=id,username&access_token=${accessToken}`;
+      const userData = await httpGet(userUrl);
+      const userId = JSON.parse(userData).id;
+
+      if (!userId) {
+        log(`Instagram/@${handle}: user not found`);
+        continue;
+      }
+
+      // Get recent media
+      const mediaUrl = `https://graph.instagram.com/v18.0/${userId}/media?fields=id,caption,media_type,media_url,permalink,timestamp,like_count&limit=10&access_token=${accessToken}`;
+      const mediaData = await httpGet(mediaUrl);
+
+      const media = JSON.parse(mediaData).data || [];
+      let newest = since;
+      let count = 0;
+
+      for (const post of media) {
+        const postId = post.id;
+        if (!since || postId > since) {
+          items.push({
+            source: `Instagram/@${handle}`,
+            title: (post.caption || 'Instagram post').slice(0, 200),
+            url: post.permalink,
+            date: post.timestamp,
+            mediaType: post.media_type,
+            engagement: post.like_count || 0,
+          });
+          if (!newest || postId > newest) newest = postId;
+          count++;
+        }
+      }
+
+      lastSeen[key] = newest || since;
+      log(`Instagram/@${handle}: ${count} new posts`);
+    } catch (e) {
+      log(`Instagram/@${handle} failed: ${e.message}`);
+    }
+  }
+
+  return items;
+}
+
+// ── Source 9: LinkedIn (API) ──────────────────────────────────────────────────
+
+async function scrapeLinkedIn(lastSeen) {
+  const items = [];
+  const accessToken = config.social?.linkedin?.accessToken || config.linkedin?.accessToken;
+
+  if (!accessToken) {
+    log('LinkedIn: no access token — skipping');
+    return items;
+  }
+
+  try {
+    const key = 'linkedin_feed';
+    const since = lastSeen[key] ? new Date(lastSeen[key]) : new Date(Date.now() - 86400000);
+
+    // Get user profile first
+    const profileUrl = 'https://api.linkedin.com/v2/me';
+    const profileData = await httpGet(profileUrl, {
+      'Authorization': `Bearer ${accessToken}`,
+      'LinkedIn-Version': '202304',
+    });
+
+    const profile = JSON.parse(profileData);
+    const personUrn = `urn:li:person:${profile.id}`;
+
+    // Get shares (posts)
+    const sharesUrl = `https://api.linkedin.com/v2/shares?q=owners&owners=${encodeURIComponent(personUrn)}&count=10`;
+    const sharesData = await httpGet(sharesUrl, {
+      'Authorization': `Bearer ${accessToken}`,
+      'LinkedIn-Version': '202304',
+    });
+
+    const shares = JSON.parse(sharesData).elements || [];
+    let newest = since;
+    let count = 0;
+
+    for (const share of shares) {
+      const shareDate = share.created?.time ? new Date(share.created.time) : new Date(0);
+      if (shareDate > since) {
+        items.push({
+          source: 'LinkedIn',
+          title: (share.text?.text || 'LinkedIn post').slice(0, 200),
+          url: share.content?.contentUrl || `https://www.linkedin.com/feed/update/${share.id}`,
+          date: shareDate.toISOString(),
+        });
+        if (shareDate > newest) newest = shareDate;
+        count++;
+      }
+    }
+
+    lastSeen[key] = newest.toISOString();
+    log(`LinkedIn: ${count} new posts`);
+  } catch (e) {
+    log(`LinkedIn failed: ${e.message}`);
+  }
+
+  return items;
+}
+
+// ── Source 10: Substack RSS ──────────────────────────────────────────────────
+
+async function scrapeSubstack(lastSeen) {
+  const items = [];
+  const feeds = config.social?.substack?.feeds || ['https://creatoreconomy.so/feed'];
+
+  for (const feedUrl of feeds) {
+    const key = `substack_${feedUrl}`;
+    const since = lastSeen[key] ? new Date(lastSeen[key]) : new Date(Date.now() - 7 * 86400000);
+
+    try {
+      const xml = await httpGet(feedUrl);
+      const feed = parseRssItems(xml);
+      let newest = since;
+      let count = 0;
+
+      for (const item of feed.slice(0, 5)) {
+        const d = item.date ? new Date(item.date) : new Date(0);
+        if ((d > since || !item.date) && item.title) {
+          items.push({
+            source: 'Substack',
+            title: item.title,
+            url: item.link || feedUrl,
+            date: item.date,
+          });
+          if (d > newest) newest = d;
+          count++;
+        }
+      }
+
+      lastSeen[key] = newest.toISOString();
+      log(`Substack: ${count} new articles`);
+    } catch (e) {
+      log(`Substack failed: ${e.message}`);
+    }
+  }
+
+  return items;
+}
+
 async function scrapeReddit(lastSeen) {
   const items = [];
   for (const sub of SUBREDDITS) {
@@ -371,17 +745,19 @@ async function filterForRelevance(rawItems) {
 
   const prompt = `You are an intelligence filter for a developer building autonomous AI agent systems using Claude Code (OpenClaw-style: persistent agents, Telegram control, worker delegation).
 
-Rate each item 1-10 for usefulness to someone building autonomous Claude Code agents:
-- 9-10: Direct technique, new tool, or pattern for autonomous agents / OpenClaw setup
-- 7-8: Related to LLM automation, agent frameworks, Claude/Anthropic tooling
-- 5-6: General AI/tech, interesting but not directly actionable
-- 1-4: Unrelated, noise
+Rate each item 1-10 for usefulness to someone building autonomous Claude Code agents. Be STRICT — most items should score 1-4.
+
+SCORING RULES (follow exactly):
+- 9-10: Direct implementation technique, new tool, or specific pattern for autonomous agents/OpenClaw/Claude Code workflows — immediately actionable
+- 7-8: Related to LLM agent automation, frameworks (langchain/crew), Claude/Anthropic tooling, or agent coordination patterns — useful context
+- 5-6: General AI/ML news, interesting but NOT directly applicable to building agents
+- 1-4: Unrelated to autonomous agents, generic tech news, announcements without substance, noise
 
 Items:
 ${itemList}
 
-Respond ONLY with a JSON array (no other text):
-[{"index":1,"score":8,"reason":"One sentence why"},{"index":2,"score":3,"reason":"why not"}]`;
+Respond ONLY with a JSON array (no other text). Every item must be scored:
+[{"index":1,"score":8,"reason":"One sentence explaining why this is useful"},{"index":2,"score":3,"reason":"One sentence why not"}]`;
 
   const result = await runClaude(prompt, { timeoutMs: 120000, model: 'sonnet' });
 
@@ -391,15 +767,16 @@ Respond ONLY with a JSON array (no other text):
     if (jsonMatch) {
       scores = JSON.parse(jsonMatch[0]);
     } else {
-      // Claude failed or returned no JSON — pass everything through
-      log(`Filter: Claude returned no JSON (${result.output.slice(0,80)}) — passing all items`);
-      return rawItems.map(item => ({ ...item, relevanceScore: 7, relevanceReason: 'Filter unavailable' }));
+      // Claude failed or returned no JSON — return empty (strict mode)
+      log(`Filter: Claude returned no JSON (${result.output.slice(0,80)}) — returning empty`);
+      return [];
     }
   } catch (e) {
-    log(`Filter parse error: ${e.message} — passing all items`);
-    return rawItems.map(item => ({ ...item, relevanceScore: 7, relevanceReason: 'Filter unavailable' }));
+    log(`Filter parse error: ${e.message} — returning empty`);
+    return [];
   }
 
+  // Only include items with score >= 7, sorted by score descending, capped at 10
   const filtered = [];
   for (const s of scores) {
     if (s.score >= 7) {
@@ -408,18 +785,12 @@ Respond ONLY with a JSON array (no other text):
     }
   }
 
-  // Safety net: if filter returned nothing but we had items, lower threshold to 5
-  if (filtered.length === 0 && scores.length > 0) {
-    const best = scores.filter(s => s.score >= 5).slice(0, 5);
-    for (const s of best) {
-      const item = rawItems[s.index - 1];
-      if (item) filtered.push({ ...item, relevanceScore: s.score, relevanceReason: s.reason });
-    }
-    if (filtered.length > 0) log(`Filter: fell back to score ≥5, got ${filtered.length} items`);
-  }
+  // Sort by score (highest first) and cap at 10 items
+  filtered.sort((a, b) => b.relevanceScore - a.relevanceScore);
+  const capped = filtered.slice(0, 10);
 
-  log(`Filter: ${filtered.length}/${rawItems.length} passed`);
-  return filtered;
+  log(`Filter: ${capped.length}/${rawItems.length} passed (score ≥7, top 10)`);
+  return capped;
 }
 
 // ── Build Telegram digest ─────────────────────────────────────────────────────
@@ -482,15 +853,20 @@ async function run(notifyFn) {
   const lastSeen = loadLastSeen();
 
   // Run all scrapers concurrently
-  const [ytItems, redditItems, ghItems, hnItems, siteItems] = await Promise.all([
+  const [ytItems, redditItems, ghItems, hnItems, siteItems, twitterItems, tiktokItems, instagramItems, linkedinItems, substackItems] = await Promise.all([
     scrapeYouTube(lastSeen),
     scrapeReddit(lastSeen),
     scrapeGitHub(lastSeen),
     scrapeHackerNews(lastSeen),
     scrapeStaticSites(lastSeen),
+    scrapeTwitter(lastSeen),
+    scrapeTikTok(lastSeen),
+    scrapeInstagram(lastSeen),
+    scrapeLinkedIn(lastSeen),
+    scrapeSubstack(lastSeen),
   ]);
 
-  const allRaw = [...ytItems, ...redditItems, ...ghItems, ...hnItems, ...siteItems];
+  const allRaw = [...ytItems, ...redditItems, ...ghItems, ...hnItems, ...siteItems, ...twitterItems, ...tiktokItems, ...instagramItems, ...linkedinItems, ...substackItems];
   log(`Total scraped: ${allRaw.length}`);
 
   // Dedup by URL
@@ -518,7 +894,15 @@ async function run(notifyFn) {
   return { total: deduped.length, sent: filtered.length, items: filtered };
 }
 
-module.exports = { run };
+module.exports = {
+  run,
+  loadLastSeen,
+  scrapeTwitter,
+  scrapeTikTok,
+  scrapeInstagram,
+  scrapeLinkedIn,
+  scrapeSubstack,
+};
 
 if (require.main === module) {
   run().catch(err => { console.error(`[intel] Fatal: ${err.message}`); process.exit(1); });

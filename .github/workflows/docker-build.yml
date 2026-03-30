@@ -1,0 +1,36 @@
+name: Docker Build
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build ${{ matrix.project }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        project:
+          - agent-tools
+          - agent-dashboard
+          - agent-scheduler
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./projects/${{ matrix.project }}
+          file: ./projects/${{ matrix.project }}/Dockerfile
+          push: false
+          tags: ${{ matrix.project }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

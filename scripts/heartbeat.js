@@ -11,7 +11,6 @@
  *   [deploy]   → scripts/agents/deploy-agent.js      (GitHub push + Vercel)
  *   [qa]       → scripts/agents/qa-agent.js          (run tests only)
  *   [monitor]  → scripts/agents/social-monitor-agent.js
- *   [jira]     → scripts/agents/jira-sync-agent.js
  *   (no tag)   → developer-agent.js (default)
  *
  * Usage: node scripts/heartbeat.js
@@ -23,7 +22,8 @@ const fs    = require('fs');
 
 const PROJECT_DIR   = path.resolve(__dirname, '..');
 const TASKS_FILE    = path.join(PROJECT_DIR, 'memory', 'TASKS.md');
-const CLAUDE_CMD    = process.env.CLAUDE_CMD || 'C:\\Users\\maxim\\AppData\\Roaming\\npm\\claude.cmd';
+const { config }    = require('./lib/config');
+const CLAUDE_CMD    = config.claude.cmd;
 const NOTIFY_SCRIPT = path.join(__dirname, 'notify.js');
 const DAILY_DIR     = path.join(PROJECT_DIR, 'memory', 'daily');
 const AGENTS_DIR    = path.join(__dirname, 'agents');
@@ -106,7 +106,6 @@ const AGENT_MAP = {
   deploy:  'deploy-agent.js',
   qa:      'qa-agent.js',
   monitor: 'social-monitor-agent.js',
-  jira:    'jira-sync-agent.js',
 };
 
 function runAgent(task) {

@@ -1,0 +1,1415 @@
+import express, { Request, Response } from 'express';
+import path from 'path';
+import fs from 'fs';
+import { execSync } from 'child_process';
+import { getWeeklyMetrics, formatDuration } from './lib/analytics';
+import matter from 'gray-matter';
+import { securityHeaders } from './middleware/security-headers';
+import { corsMiddleware } from './middleware/cors';
+import { checkAllServices } from './lib/service-health';
+import { validateEnvironmentOrExit } from './lib/env-validator';
+import { getGitHubIssuesKanban, getGitHubRepoInfo } from './lib/github-issues';
+
+// Validate environment variables before starting
+validateEnvironmentOrExit();
+
+const app = express();
+const PORT = 3001;
+const ROOT = path.resolve(__dirname, '..', '..', '..');
+
+// Security headers middleware - must be first for all responses
+app.use(securityHeaders);
+
+// CORS middleware - must be before routes
+app.use(corsMiddleware);
+
+// Helper: Read goals from memory/goals.md
+function readGoals(): { active: string[]; waiting: string[]; completed: string[] } {
+  try {
+    const goalsPath = path.join(ROOT, 'memory', 'goals.md');
+    const content = fs.readFileSync(goalsPath, 'utf8');
+
+    const active: string[] = [];
+    const waiting: string[] = [];
+    const completed: string[] = [];
+
+    let section: 'none' | 'active' | 'waiting' | 'completed' = 'none';
+
+    for (const line of content.split('\n')) {
+      if (line.includes('## Active Goals')) section = 'active';
+      else if (line.includes('## Waiting Goals')) section = 'waiting';
+      else if (line.includes('## Completed Goals')) section = 'completed';
+      else if (line.startsWith('###')) {
+        const goal = line.replace(/^###\s*/, '').trim();
+        if (section === 'active') active.push(goal);
+        else if (section === 'waiting') waiting.push(goal);
+        else if (section === 'completed') completed.push(goal);
+      }
+    }
+
+    return { active, waiting, completed };
+  } catch (err) {
+    return { active: [], waiting: [], completed: [] };
+  }
+}
+
+// Helper: Get active workers
+function getActiveWorkers(): Array<{ id: string; task: string; runningMs: number }> {
+  try {
+    const workersPath = path.join(ROOT, 'scripts', 'lib', 'workers.js');
+    const workers = require(workersPath);
+    return workers.listActive();
+  } catch (err) {
+    return [];
+  }
+}
+
+// Helper: Read last N daily log entries
+function readDailyLog(count: number = 20): string[] {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const logPath = path.join(ROOT, 'memory', 'daily', `${today}.md`);
+    const content = fs.readFileSync(logPath, 'utf8');
+
+    const entries = content
+      .split('\n')
+      .filter(line => line.trim().startsWith('-'))
+      .slice(-count);
+
+    return entries;
+  } catch (err) {
+    return [];
+  }
+}
+
+// Helper: Get git status
+function getGitStatus(): { branch: string; commits: string[] } {
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      cwd: ROOT,
+      encoding: 'utf8'
+    }).trim();
+
+    const commits = execSync('git log --oneline -5', {
+      cwd: ROOT,
+      encoding: 'utf8'
+    })
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+
+    return { branch, commits };
+  } catch (err) {
+    return { branch: 'unknown', commits: [] };
+  }
+}
+
+// Helper: Check decision engine status
+function getDecisionEngineStatus(): { available: boolean; message: string } {
+  try {
+    const deciderPath = path.join(ROOT, 'scripts', 'lib', 'decider.js');
+    const exists = fs.existsSync(deciderPath);
+    return {
+      available: exists,
+      message: exists ? 'Decision engine ready' : 'Decision engine not found'
+    };
+  } catch (err) {
+    return { available: false, message: 'Error checking decision engine' };
+  }
+}
+
+// Helper: Read tasks from memory/TASKS.md
+function readTasks(): { inProgress: string[]; pending: string[]; completed: string[] } {
+  try {
+    const tasksPath = path.join(ROOT, 'memory', 'TASKS.md');
+    const content = fs.readFileSync(tasksPath, 'utf8');
+
+    const inProgress: string[] = [];
+    const pending: string[] = [];
+    const completed: string[] = [];
+
+    let section: 'none' | 'inProgress' | 'pending' | 'completed' = 'none';
+
+    for (const line of content.split('\n')) {
+      if (line.includes('## 🔄 In Progress')) section = 'inProgress';
+      else if (line.includes('## 📋 Pending')) section = 'pending';
+      else if (line.includes('## ✅ Completed')) section = 'completed';
+      else if (line.trim().startsWith('-')) {
+        const task = line.trim();
+        if (section === 'inProgress') inProgress.push(task);
+        else if (section === 'pending') pending.push(task);
+        else if (section === 'completed') completed.push(task);
+      }
+    }
+
+    return { inProgress, pending, completed };
+  } catch (err) {
+    return { inProgress: [], pending: [], completed: [] };
+  }
+}
+
+// Helper: Read memory directory structure recursively
+interface MemoryFile {
+  name: string;
+  path: string;
+  type: string;
+  description?: string;
+  frontmatter?: Record<string, any>;
+}
+
+interface MemoryDirectory {
+  name: string;
+  path: string;
+  files: MemoryFile[];
+  subdirectories: MemoryDirectory[];
+}
+
+function readMemoryStructure(dirPath: string, relativePath: string = ''): MemoryDirectory {
+  const fullPath = path.join(ROOT, 'memory', dirPath);
+  const dirName = path.basename(dirPath) || 'memory';
+
+  const result: MemoryDirectory = {
+    name: dirName,
+    path: relativePath || 'memory',
+    files: [],
+    subdirectories: [],
+  };
+
+  try {
+    const entries = fs.readdirSync(fullPath, { withFileTypes: true });
+
+    // Process files
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.md')) {
+        const filePath = path.join(fullPath, entry.name);
+        const fileRelativePath = path.join(relativePath || 'memory', entry.name);
+
+        try {
+          const content = fs.readFileSync(filePath, 'utf8');
+          const parsed = matter(content);
+
+          const fileInfo: MemoryFile = {
+            name: entry.name,
+            path: fileRelativePath,
+            type: parsed.data.type || 'unknown',
+            description: parsed.data.description || parsed.data.name || undefined,
+            frontmatter: Object.keys(parsed.data).length > 0 ? parsed.data : undefined,
+          };
+
+          result.files.push(fileInfo);
+        } catch (err) {
+          // If file can't be read, add basic info
+          result.files.push({
+            name: entry.name,
+            path: fileRelativePath,
+            type: 'unknown',
+          });
+        }
+      }
+    }
+
+    // Process subdirectories
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        const subDirPath = path.join(dirPath, entry.name);
+        const subRelativePath = path.join(relativePath || 'memory', entry.name);
+        const subDir = readMemoryStructure(subDirPath, subRelativePath);
+        result.subdirectories.push(subDir);
+      }
+    }
+
+    return result;
+  } catch (err) {
+    return result;
+  }
+}
+
+// API endpoints
+app.get('/api/status', (req: Request, res: Response) => {
+  const status = {
+    goals: readGoals(),
+    workers: getActiveWorkers(),
+    recentLogs: readDailyLog(20),
+    git: getGitStatus(),
+    decisionEngine: getDecisionEngineStatus(),
+    timestamp: new Date().toISOString(),
+  };
+
+  res.json(status);
+});
+
+app.get('/api/logs', (req: Request, res: Response) => {
+  const count = parseInt(req.query.count as string) || 20;
+  const logs = readDailyLog(count);
+
+  res.json({
+    logs,
+    count: logs.length,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/goals', (req: Request, res: Response) => {
+  const goals = readGoals();
+
+  res.json({
+    goals,
+    summary: {
+      active: goals.active.length,
+      waiting: goals.waiting.length,
+      completed: goals.completed.length,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/tasks', (req: Request, res: Response) => {
+  const tasks = readTasks();
+
+  res.json({
+    tasks,
+    summary: {
+      inProgress: tasks.inProgress.length,
+      pending: tasks.pending.length,
+      completed: tasks.completed.length,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/recent-activity', (req: Request, res: Response) => {
+  const count = parseInt(req.query.count as string) || 20;
+  const logs = readDailyLog(count);
+
+  res.json({
+    activity: logs,
+    count: logs.length,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/workers', (req: Request, res: Response) => {
+  const workers = getActiveWorkers();
+
+  res.json({
+    workers,
+    count: workers.length,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/schedules', async (req: Request, res: Response) => {
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const response = await fetch('http://localhost:3002/schedules');
+
+    if (!response.ok) {
+      throw new Error(`Scheduler API returned ${response.status}`);
+    }
+
+    const data = await response.json() as { schedules: any[]; count: number };
+
+    res.json({
+      schedules: data.schedules,
+      count: data.count,
+      available: true,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    // Scheduler service unavailable
+    res.json({
+      schedules: [],
+      count: 0,
+      available: false,
+      error: 'Scheduler service not available',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+app.get('/api/memory', (req: Request, res: Response) => {
+  try {
+    const memoryStructure = readMemoryStructure('');
+
+    // Calculate statistics
+    const countByType: Record<string, number> = {};
+    let totalFiles = 0;
+
+    function countFiles(dir: MemoryDirectory) {
+      for (const file of dir.files) {
+        totalFiles++;
+        countByType[file.type] = (countByType[file.type] || 0) + 1;
+      }
+      for (const subDir of dir.subdirectories) {
+        countFiles(subDir);
+      }
+    }
+
+    countFiles(memoryStructure);
+
+    res.json({
+      structure: memoryStructure,
+      statistics: {
+        totalFiles,
+        byType: countByType,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to read memory structure',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+app.get('/api/metrics', (req: Request, res: Response) => {
+  const days = parseInt(req.query.days as string) || 7;
+  const metrics = getWeeklyMetrics(ROOT, days);
+
+  res.json({
+    metrics: {
+      days: metrics.days.map(day => ({
+        ...day,
+        avgTaskDurationFormatted: formatDuration(day.avgTaskDurationMs),
+      })),
+      summary: {
+        ...metrics.summary,
+        avgCompletionTimeFormatted: formatDuration(metrics.summary.avgCompletionTimeMs),
+      },
+    },
+    period: {
+      days,
+      start: metrics.days[0]?.date || null,
+      end: metrics.days[metrics.days.length - 1]?.date || null,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/services', async (req: Request, res: Response) => {
+  const healthStatus = await checkAllServices();
+  res.json(healthStatus);
+});
+
+app.get('/api/github-issues', async (req: Request, res: Response) => {
+  try {
+    const repoInfo = getGitHubRepoInfo(ROOT);
+
+    if (!repoInfo) {
+      return res.json({
+        success: false,
+        error: 'Unable to determine GitHub repository',
+        kanban: { backlog: [], inProgress: [], done: [] },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const kanban = await getGitHubIssuesKanban(repoInfo.owner, repoInfo.repo);
+
+    res.json({
+      success: true,
+      owner: repoInfo.owner,
+      repo: repoInfo.repo,
+      kanban,
+      summary: {
+        backlog: kanban.backlog.length,
+        inProgress: kanban.inProgress.length,
+        done: kanban.done.length,
+        total: kanban.backlog.length + kanban.inProgress.length + kanban.done.length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.json({
+      success: false,
+      error: error.message,
+      kanban: { backlog: [], inProgress: [], done: [] },
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+app.get('/health', (req: Request, res: Response) => {
+  res.json({
+    status: 'healthy',
+    service: 'agent-dashboard',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Web UI
+app.get('/', (req: Request, res: Response) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      padding: 20px;
+    }
+    h1 { color: #58a6ff; margin-bottom: 20px; font-size: 28px; }
+    h2 { color: #8b949e; font-size: 18px; margin: 15px 0 10px; border-bottom: 1px solid #21262d; padding-bottom: 5px; }
+    h3 { color: #7d8590; font-size: 15px; margin: 12px 0 8px; }
+    .container { max-width: 1600px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 16px;
+    }
+    .full-width { grid-column: 1 / -1; }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+    .badge-success { background: #238636; color: #fff; }
+    .badge-warning { background: #9e6a03; color: #fff; }
+    .badge-info { background: #1f6feb; color: #fff; }
+    .badge-error { background: #da3633; color: #fff; }
+    .log-entry {
+      font-size: 13px;
+      padding: 6px 0;
+      border-bottom: 1px solid #21262d;
+      font-family: 'Courier New', monospace;
+    }
+    .log-entry:last-child { border-bottom: none; }
+    .worker-item {
+      background: #0d1117;
+      padding: 10px;
+      margin: 8px 0;
+      border-radius: 4px;
+      border-left: 3px solid #58a6ff;
+    }
+    .item {
+      padding: 8px;
+      margin: 6px 0;
+      background: #0d1117;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .task-item { border-left: 3px solid #58a6ff; }
+    .goal-item { border-left: 3px solid #3fb950; }
+    .completed-item {
+      border-left: 3px solid #8b949e;
+      opacity: 0.7;
+    }
+    .timestamp {
+      text-align: right;
+      font-size: 12px;
+      color: #8b949e;
+      margin-top: 15px;
+    }
+    .empty-state { color: #8b949e; font-style: italic; padding: 10px 0; }
+    .refresh-indicator {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #238636;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 12px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      z-index: 1000;
+    }
+    .refresh-indicator.show { opacity: 1; }
+    .section-count {
+      font-size: 13px;
+      color: #7d8590;
+      font-weight: normal;
+    }
+    .schedule-item {
+      background: #0d1117;
+      padding: 12px;
+      margin: 8px 0;
+      border-radius: 4px;
+      border-left: 3px solid #a371f7;
+    }
+    .schedule-disabled {
+      opacity: 0.5;
+      border-left-color: #6e7681;
+    }
+    .schedule-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .schedule-name {
+      font-weight: 600;
+      font-size: 14px;
+      color: #c9d1d9;
+    }
+    .schedule-details {
+      font-size: 12px;
+      color: #8b949e;
+      margin: 4px 0;
+    }
+    .schedule-cron {
+      font-family: 'Courier New', monospace;
+      background: #161b22;
+      padding: 2px 6px;
+      border-radius: 3px;
+      color: #58a6ff;
+    }
+    .metric-card {
+      background: #0d1117;
+      padding: 16px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+      text-align: center;
+    }
+    .metric-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #58a6ff;
+      margin: 8px 0;
+    }
+    .metric-label {
+      font-size: 13px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-sublabel {
+      font-size: 12px;
+      color: #7d8590;
+      margin-top: 4px;
+    }
+    .success-rate-good { color: #3fb950; }
+    .success-rate-fair { color: #d29922; }
+    .success-rate-poor { color: #da3633; }
+    .service-status-card {
+      background: #0d1117;
+      padding: 16px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+      text-align: center;
+    }
+    .service-status-healthy { border-left: 4px solid #3fb950; }
+    .service-status-slow { border-left: 4px solid #d29922; }
+    .service-status-down { border-left: 4px solid #da3633; }
+    .service-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #c9d1d9;
+      margin-bottom: 8px;
+    }
+    .service-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+    .indicator-healthy { background: #3fb950; box-shadow: 0 0 8px #3fb950; }
+    .indicator-slow { background: #d29922; box-shadow: 0 0 8px #d29922; }
+    .indicator-down { background: #da3633; box-shadow: 0 0 8px #da3633; }
+    .service-response {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 8px 0;
+    }
+    .response-healthy { color: #3fb950; }
+    .response-slow { color: #d29922; }
+    .response-down { color: #da3633; }
+    .service-url {
+      font-size: 11px;
+      color: #7d8590;
+      font-family: 'Courier New', monospace;
+      margin-top: 4px;
+    }
+    .service-error {
+      font-size: 11px;
+      color: #da3633;
+      margin-top: 6px;
+      font-style: italic;
+    }
+    .kanban-columns {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .kanban-column {
+      background: #0d1117;
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+    }
+    .kanban-header {
+      font-size: 14px;
+      font-weight: 600;
+      color: #c9d1d9;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #30363d;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .kanban-count {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #21262d;
+    }
+    .kanban-backlog { border-top: 3px solid #7d8590; }
+    .kanban-in-progress { border-top: 3px solid #58a6ff; }
+    .kanban-done { border-top: 3px solid #3fb950; }
+    .issue-card {
+      background: #161b22;
+      padding: 10px;
+      margin: 8px 0;
+      border-radius: 4px;
+      border-left: 3px solid #30363d;
+      font-size: 13px;
+      transition: transform 0.2s;
+    }
+    .issue-card:hover {
+      transform: translateX(2px);
+      border-left-color: #58a6ff;
+    }
+    .issue-number {
+      color: #7d8590;
+      font-weight: 600;
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+    .issue-title {
+      color: #c9d1d9;
+      line-height: 1.4;
+    }
+    .issue-labels {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .issue-label {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 10px;
+      background: #21262d;
+      color: #8b949e;
+    }
+    .worker-feed {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .worker-activity {
+      background: #161b22;
+      padding: 10px;
+      margin: 6px 0;
+      border-radius: 4px;
+      border-left: 3px solid #a371f7;
+      font-size: 13px;
+    }
+    .worker-activity-time {
+      font-size: 11px;
+      color: #7d8590;
+      margin-bottom: 4px;
+    }
+    .worker-activity-content {
+      color: #c9d1d9;
+      line-height: 1.4;
+    }
+
+    /* Mobile Responsive Styles */
+    @media (max-width: 768px) {
+      body {
+        padding: 12px;
+      }
+      h1 {
+        font-size: 22px;
+        margin-bottom: 15px;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 12px 0 8px;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 10px 0 6px;
+      }
+      .container {
+        max-width: 100%;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .kanban-columns {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .card {
+        padding: 12px;
+      }
+      .refresh-indicator {
+        top: 12px;
+        right: 12px;
+        padding: 6px 12px;
+        font-size: 11px;
+      }
+      .metric-value {
+        font-size: 24px;
+      }
+      .metric-label {
+        font-size: 11px;
+      }
+      .metric-sublabel {
+        font-size: 11px;
+      }
+      .service-status-card {
+        padding: 12px;
+      }
+      .service-response {
+        font-size: 16px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      body {
+        padding: 8px;
+      }
+      h1 {
+        font-size: 18px;
+        margin-bottom: 12px;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 10px 0 6px;
+      }
+      h3 {
+        font-size: 13px;
+        margin: 8px 0 5px;
+      }
+      .card {
+        padding: 10px;
+        border-radius: 4px;
+      }
+      .grid {
+        gap: 10px;
+      }
+      .log-entry {
+        font-size: 11px;
+        padding: 4px 0;
+      }
+      .worker-item, .schedule-item {
+        padding: 8px;
+        margin: 6px 0;
+      }
+      .item {
+        padding: 6px;
+        margin: 5px 0;
+        font-size: 12px;
+      }
+      .metric-card {
+        padding: 12px;
+      }
+      .metric-value {
+        font-size: 20px;
+        margin: 6px 0;
+      }
+      .metric-label {
+        font-size: 10px;
+      }
+      .metric-sublabel {
+        font-size: 10px;
+      }
+      .service-status-card {
+        padding: 10px;
+      }
+      .service-name {
+        font-size: 13px;
+      }
+      .service-response {
+        font-size: 14px;
+      }
+      .service-url {
+        font-size: 10px;
+      }
+      .status-badge {
+        padding: 3px 6px;
+        font-size: 10px;
+      }
+      .schedule-name {
+        font-size: 13px;
+      }
+      .schedule-details {
+        font-size: 11px;
+      }
+      .refresh-indicator {
+        top: 8px;
+        right: 8px;
+        padding: 5px 10px;
+        font-size: 10px;
+      }
+      .timestamp {
+        font-size: 11px;
+        margin-top: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🤖 Agent Dashboard</h1>
+
+    <!-- Service Health Section -->
+    <div class="card full-width">
+      <h2>🏥 Service Health</h2>
+      <div class="grid" id="service-health-grid"></div>
+    </div>
+
+    <!-- Metrics Summary Section -->
+    <div class="card full-width">
+      <h2>📈 Weekly Metrics</h2>
+      <div class="grid">
+        <div class="metric-card">
+          <div class="metric-label">Tasks This Week</div>
+          <div class="metric-value" id="metric-tasks">-</div>
+          <div class="metric-sublabel" id="metric-tasks-avg">- per day</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Success Rate</div>
+          <div class="metric-value" id="metric-success">-</div>
+          <div class="metric-sublabel" id="metric-workers">- workers spawned</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Avg Completion Time</div>
+          <div class="metric-value" id="metric-time">-</div>
+          <div class="metric-sublabel" id="metric-commits">- commits</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sprint Board (GitHub Issues Kanban) -->
+    <div class="card full-width" style="margin-top: 20px;">
+      <h2>📋 Sprint Board <span class="section-count" id="sprint-total">(0)</span></h2>
+      <div class="kanban-columns">
+        <div class="kanban-column kanban-backlog">
+          <div class="kanban-header">
+            <span>Backlog</span>
+            <span class="kanban-count" id="kanban-backlog-count">0</span>
+          </div>
+          <div id="kanban-backlog"></div>
+        </div>
+        <div class="kanban-column kanban-in-progress">
+          <div class="kanban-header">
+            <span>In Progress</span>
+            <span class="kanban-count" id="kanban-inprogress-count">0</span>
+          </div>
+          <div id="kanban-inprogress"></div>
+        </div>
+        <div class="kanban-column kanban-done">
+          <div class="kanban-header">
+            <span>Done</span>
+            <span class="kanban-count" id="kanban-done-count">0</span>
+          </div>
+          <div id="kanban-done"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Worker Activity Feed -->
+    <div class="card full-width" style="margin-top: 20px;">
+      <h2>👷 Worker Activity Feed <span class="section-count" id="worker-feed-count">(0)</span></h2>
+      <div class="worker-feed" id="worker-feed"></div>
+    </div>
+
+    <!-- Recent Activity Section -->
+    <div class="card full-width" style="margin-top: 20px;">
+      <h2>📊 Recent Activity <span class="section-count" id="activity-count">(0)</span></h2>
+      <div id="recent-activity"></div>
+    </div>
+
+    <!-- Workers and Goals Grid -->
+    <div class="grid" style="margin-top: 20px;">
+      <div class="card">
+        <h2>👷 Active Workers <span class="section-count" id="workers-count">(0)</span></h2>
+        <div id="workers"></div>
+      </div>
+
+      <div class="card">
+        <h2>🎯 Goals</h2>
+        <h3>Active <span class="section-count" id="goals-active-count">(0)</span></h3>
+        <div id="goals-active"></div>
+        <h3 style="margin-top: 15px;">Waiting <span class="section-count" id="goals-waiting-count">(0)</span></h3>
+        <div id="goals-waiting"></div>
+        <h3 style="margin-top: 15px;">Completed (Last 3) <span class="section-count" id="goals-completed-count">(0)</span></h3>
+        <div id="goals-completed"></div>
+      </div>
+    </div>
+
+    <!-- Tasks Section -->
+    <div class="card" style="margin-top: 20px;">
+      <h2>✅ Tasks</h2>
+      <div class="grid">
+        <div>
+          <h3>In Progress <span class="section-count" id="tasks-progress-count">(0)</span></h3>
+          <div id="tasks-progress"></div>
+        </div>
+        <div>
+          <h3>Pending <span class="section-count" id="tasks-pending-count">(0)</span></h3>
+          <div id="tasks-pending"></div>
+        </div>
+        <div>
+          <h3>Completed (Last 5) <span class="section-count" id="tasks-completed-count">(0)</span></h3>
+          <div id="tasks-completed"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scheduled Tasks Section -->
+    <div class="card" style="margin-top: 20px;">
+      <h2>⏰ Scheduled Tasks <span class="section-count" id="schedules-count">(0)</span></h2>
+      <div id="schedules"></div>
+    </div>
+
+    <!-- Memory Section -->
+    <div class="card" style="margin-top: 20px;">
+      <h2>🧠 Memory Structure</h2>
+      <div class="grid">
+        <div class="metric-card">
+          <div class="metric-label">Total Files</div>
+          <div class="metric-value" id="memory-total">-</div>
+          <div class="metric-sublabel" id="memory-unknown">- unknown</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">User Memories</div>
+          <div class="metric-value" id="memory-user">-</div>
+          <div class="metric-sublabel">User preferences & context</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Feedback</div>
+          <div class="metric-value" id="memory-feedback">-</div>
+          <div class="metric-sublabel">Learned behaviors</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Project Memories</div>
+          <div class="metric-value" id="memory-project">-</div>
+          <div class="metric-sublabel">Project context</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">References</div>
+          <div class="metric-value" id="memory-reference">-</div>
+          <div class="metric-sublabel">External pointers</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Patterns</div>
+          <div class="metric-value" id="memory-pattern">-</div>
+          <div class="metric-sublabel">Reusable patterns</div>
+        </div>
+      </div>
+      <div id="memory-tree" style="margin-top: 20px; max-height: 400px; overflow-y: auto; background: #0d1117; padding: 12px; border-radius: 4px;"></div>
+    </div>
+
+    <div class="timestamp" id="timestamp"></div>
+  </div>
+
+  <div class="refresh-indicator" id="refresh-indicator">Refreshing...</div>
+
+  <script>
+    async function fetchAllData() {
+      const indicator = document.getElementById('refresh-indicator');
+      indicator.classList.add('show');
+
+      try {
+        // Fetch all endpoints in parallel
+        const [servicesRes, activityRes, workersRes, goalsRes, tasksRes, schedulesRes, metricsRes, memoryRes, githubIssuesRes] = await Promise.all([
+          fetch('/api/services'),
+          fetch('/api/recent-activity?count=10'),
+          fetch('/api/workers'),
+          fetch('/api/goals'),
+          fetch('/api/tasks'),
+          fetch('/api/schedules'),
+          fetch('/api/metrics?days=7'),
+          fetch('/api/memory'),
+          fetch('/api/github-issues')
+        ]);
+
+        const [services, activity, workers, goals, tasks, schedules, metrics, memory, githubIssues] = await Promise.all([
+          servicesRes.json(),
+          activityRes.json(),
+          workersRes.json(),
+          goalsRes.json(),
+          tasksRes.json(),
+          schedulesRes.json(),
+          metricsRes.json(),
+          memoryRes.json(),
+          githubIssuesRes.json()
+        ]);
+
+        // Service Health
+        const serviceHealthGrid = document.getElementById('service-health-grid');
+        if (services.services && services.services.length > 0) {
+          serviceHealthGrid.innerHTML = services.services.map(service => {
+            const statusClass = \`service-status-\${service.status}\`;
+            const indicatorClass = \`indicator-\${service.status}\`;
+            const responseClass = \`response-\${service.status}\`;
+
+            let statusText = '';
+            if (service.status === 'healthy') {
+              statusText = \`\${service.responseTimeMs}ms\`;
+            } else if (service.status === 'slow') {
+              statusText = \`\${service.responseTimeMs}ms (slow)\`;
+            } else {
+              statusText = 'Down';
+            }
+
+            return \`<div class="service-status-card \${statusClass}">
+              <div class="service-name">
+                <span class="service-indicator \${indicatorClass}"></span>
+                \${service.name}
+              </div>
+              <div class="service-response \${responseClass}">\${statusText}</div>
+              <div class="service-url">\${service.url}</div>
+              \${service.error ? \`<div class="service-error">\${service.error}</div>\` : ''}
+            </div>\`;
+          }).join('');
+        } else {
+          serviceHealthGrid.innerHTML = '<div class="empty-state">Unable to check service health</div>';
+        }
+
+        // Metrics Summary
+        if (metrics.metrics) {
+          const summary = metrics.metrics.summary;
+          document.getElementById('metric-tasks').textContent = summary.totalTasks.toString();
+          document.getElementById('metric-tasks-avg').textContent = \`\${summary.avgTasksPerDay.toFixed(1)} per day\`;
+
+          const successRate = summary.successRate;
+          const successEl = document.getElementById('metric-success');
+          successEl.textContent = \`\${successRate.toFixed(1)}%\`;
+          // Color code success rate
+          if (successRate >= 90) {
+            successEl.className = 'metric-value success-rate-good';
+          } else if (successRate >= 70) {
+            successEl.className = 'metric-value success-rate-fair';
+          } else {
+            successEl.className = 'metric-value success-rate-poor';
+          }
+          document.getElementById('metric-workers').textContent = \`\${summary.totalWorkers} workers spawned\`;
+
+          document.getElementById('metric-time').textContent = summary.avgCompletionTimeFormatted;
+          document.getElementById('metric-commits').textContent = \`\${summary.commits} commits\`;
+        }
+
+        // GitHub Issues Kanban Board
+        if (githubIssues.success && githubIssues.kanban) {
+          const kanban = githubIssues.kanban;
+          const totalIssues = kanban.backlog.length + kanban.inProgress.length + kanban.done.length;
+          document.getElementById('sprint-total').textContent = \`(\${totalIssues})\`;
+          document.getElementById('kanban-backlog-count').textContent = kanban.backlog.length.toString();
+          document.getElementById('kanban-inprogress-count').textContent = kanban.inProgress.length.toString();
+          document.getElementById('kanban-done-count').textContent = kanban.done.length.toString();
+
+          // Render backlog issues
+          const backlogDiv = document.getElementById('kanban-backlog');
+          if (kanban.backlog.length === 0) {
+            backlogDiv.innerHTML = '<div class="empty-state">No backlog issues</div>';
+          } else {
+            backlogDiv.innerHTML = kanban.backlog.slice(0, 10).map(issue => \`
+              <div class="issue-card">
+                <div class="issue-number">#\${issue.number}</div>
+                <div class="issue-title">\${issue.title}</div>
+                \${issue.labels.length > 0 ? \`<div class="issue-labels">\${issue.labels.map(label => \`<span class="issue-label">\${label}</span>\`).join('')}</div>\` : ''}
+              </div>
+            \`).join('');
+          }
+
+          // Render in-progress issues
+          const inProgressDiv = document.getElementById('kanban-inprogress');
+          if (kanban.inProgress.length === 0) {
+            inProgressDiv.innerHTML = '<div class="empty-state">No issues in progress</div>';
+          } else {
+            inProgressDiv.innerHTML = kanban.inProgress.slice(0, 10).map(issue => \`
+              <div class="issue-card">
+                <div class="issue-number">#\${issue.number}</div>
+                <div class="issue-title">\${issue.title}</div>
+                \${issue.labels.length > 0 ? \`<div class="issue-labels">\${issue.labels.map(label => \`<span class="issue-label">\${label}</span>\`).join('')}</div>\` : ''}
+              </div>
+            \`).join('');
+          }
+
+          // Render done issues
+          const doneDiv = document.getElementById('kanban-done');
+          if (kanban.done.length === 0) {
+            doneDiv.innerHTML = '<div class="empty-state">No completed issues</div>';
+          } else {
+            doneDiv.innerHTML = kanban.done.slice(0, 10).map(issue => \`
+              <div class="issue-card">
+                <div class="issue-number">#\${issue.number}</div>
+                <div class="issue-title">\${issue.title}</div>
+                \${issue.labels.length > 0 ? \`<div class="issue-labels">\${issue.labels.map(label => \`<span class="issue-label">\${label}</span>\`).join('')}</div>\` : ''}
+              </div>
+            \`).join('');
+          }
+        } else {
+          document.getElementById('sprint-total').textContent = '(0)';
+          document.getElementById('kanban-backlog').innerHTML = '<div class="empty-state">Unable to fetch GitHub issues</div>';
+          document.getElementById('kanban-inprogress').innerHTML = '<div class="empty-state">Unable to fetch GitHub issues</div>';
+          document.getElementById('kanban-done').innerHTML = '<div class="empty-state">Unable to fetch GitHub issues</div>';
+        }
+
+        // Worker Activity Feed (enhanced from recent activity)
+        const workerFeedDiv = document.getElementById('worker-feed');
+        const workerActivities = activity.activity.filter(entry =>
+          entry.toLowerCase().includes('worker') ||
+          entry.toLowerCase().includes('spawning') ||
+          entry.toLowerCase().includes('spawned')
+        );
+        document.getElementById('worker-feed-count').textContent = \`(\${workerActivities.length})\`;
+        if (workerActivities.length === 0) {
+          workerFeedDiv.innerHTML = '<div class="empty-state">No recent worker activity</div>';
+        } else {
+          workerFeedDiv.innerHTML = workerActivities.map(entry => {
+            const timeMatch = entry.match(/^- (\\d+:\\d+:\\d+ [ap]m)/);
+            const time = timeMatch ? timeMatch[1] : '';
+            const content = entry.replace(/^- \\d+:\\d+:\\d+ [ap]m — /, '');
+            return \`
+              <div class="worker-activity">
+                <div class="worker-activity-time">\${time}</div>
+                <div class="worker-activity-content">\${content}</div>
+              </div>
+            \`;
+          }).join('');
+        }
+
+        // Recent Activity
+        const activityDiv = document.getElementById('recent-activity');
+        document.getElementById('activity-count').textContent = \`(\${activity.count})\`;
+        if (activity.activity.length === 0) {
+          activityDiv.innerHTML = '<div class="empty-state">No recent activity</div>';
+        } else {
+          activityDiv.innerHTML = activity.activity.map(entry =>
+            \`<div class="log-entry">\${entry}</div>\`
+          ).join('');
+        }
+
+        // Workers
+        const workersDiv = document.getElementById('workers');
+        document.getElementById('workers-count').textContent = \`(\${workers.count})\`;
+        if (workers.workers.length === 0) {
+          workersDiv.innerHTML = '<div class="empty-state">No active workers</div>';
+        } else {
+          workersDiv.innerHTML = workers.workers.map(w =>
+            \`<div class="worker-item">
+              <strong>\${w.id}</strong><br>
+              <small>\${w.task}</small><br>
+              <small style="color: #58a6ff;">Running: \${Math.round(w.runningMs / 1000)}s</small>
+            </div>\`
+          ).join('');
+        }
+
+        // Goals - Active
+        const goalsActiveDiv = document.getElementById('goals-active');
+        document.getElementById('goals-active-count').textContent = \`(\${goals.summary.active})\`;
+        if (goals.goals.active.length === 0) {
+          goalsActiveDiv.innerHTML = '<div class="empty-state">No active goals</div>';
+        } else {
+          goalsActiveDiv.innerHTML = goals.goals.active.map(g =>
+            \`<div class="item goal-item">\${g}</div>\`
+          ).join('');
+        }
+
+        // Goals - Waiting
+        const goalsWaitingDiv = document.getElementById('goals-waiting');
+        document.getElementById('goals-waiting-count').textContent = \`(\${goals.summary.waiting})\`;
+        if (goals.goals.waiting.length === 0) {
+          goalsWaitingDiv.innerHTML = '<div class="empty-state">No waiting goals</div>';
+        } else {
+          goalsWaitingDiv.innerHTML = goals.goals.waiting.map(g =>
+            \`<div class="item goal-item">\${g}</div>\`
+          ).join('');
+        }
+
+        // Goals - Completed (last 3)
+        const goalsCompletedDiv = document.getElementById('goals-completed');
+        document.getElementById('goals-completed-count').textContent = \`(\${goals.summary.completed})\`;
+        if (goals.goals.completed.length === 0) {
+          goalsCompletedDiv.innerHTML = '<div class="empty-state">No completed goals</div>';
+        } else {
+          const lastThree = goals.goals.completed.slice(-3).reverse();
+          goalsCompletedDiv.innerHTML = lastThree.map(g =>
+            \`<div class="item completed-item">\${g}</div>\`
+          ).join('');
+        }
+
+        // Tasks - In Progress
+        const tasksProgressDiv = document.getElementById('tasks-progress');
+        document.getElementById('tasks-progress-count').textContent = \`(\${tasks.summary.inProgress})\`;
+        if (tasks.tasks.inProgress.length === 0) {
+          tasksProgressDiv.innerHTML = '<div class="empty-state">No tasks in progress</div>';
+        } else {
+          tasksProgressDiv.innerHTML = tasks.tasks.inProgress.map(t =>
+            \`<div class="item task-item">\${t}</div>\`
+          ).join('');
+        }
+
+        // Tasks - Pending
+        const tasksPendingDiv = document.getElementById('tasks-pending');
+        document.getElementById('tasks-pending-count').textContent = \`(\${tasks.summary.pending})\`;
+        if (tasks.tasks.pending.length === 0) {
+          tasksPendingDiv.innerHTML = '<div class="empty-state">No pending tasks</div>';
+        } else {
+          tasksPendingDiv.innerHTML = tasks.tasks.pending.map(t =>
+            \`<div class="item task-item">\${t}</div>\`
+          ).join('');
+        }
+
+        // Tasks - Completed (last 5)
+        const tasksCompletedDiv = document.getElementById('tasks-completed');
+        document.getElementById('tasks-completed-count').textContent = \`(\${tasks.summary.completed})\`;
+        if (tasks.tasks.completed.length === 0) {
+          tasksCompletedDiv.innerHTML = '<div class="empty-state">No completed tasks</div>';
+        } else {
+          const lastFive = tasks.tasks.completed.slice(-5).reverse();
+          tasksCompletedDiv.innerHTML = lastFive.map(t =>
+            \`<div class="item completed-item">\${t}</div>\`
+          ).join('');
+        }
+
+        // Scheduled Tasks
+        const schedulesDiv = document.getElementById('schedules');
+        document.getElementById('schedules-count').textContent = \`(\${schedules.count})\`;
+        if (!schedules.available) {
+          schedulesDiv.innerHTML = '<div class="empty-state">⚠️ Scheduler service not available</div>';
+        } else if (schedules.schedules.length === 0) {
+          schedulesDiv.innerHTML = '<div class="empty-state">No scheduled tasks</div>';
+        } else {
+          schedulesDiv.innerHTML = schedules.schedules.map(s => {
+            const lastRun = s.last_run ? new Date(s.last_run).toLocaleString() : 'Never';
+            const nextRun = s.next_run ? new Date(s.next_run).toLocaleString() : 'Not scheduled';
+            const enabled = s.enabled === 1;
+            const statusBadge = enabled ?
+              '<span class="status-badge badge-success">Enabled</span>' :
+              '<span class="status-badge badge-warning">Disabled</span>';
+
+            return \`<div class="schedule-item \${enabled ? '' : 'schedule-disabled'}">
+              <div class="schedule-header">
+                <span class="schedule-name">\${s.name}</span>
+                \${statusBadge}
+              </div>
+              <div class="schedule-details">
+                <strong>Cron:</strong> <span class="schedule-cron">\${s.cron_expression}</span>
+              </div>
+              <div class="schedule-details"><strong>Command:</strong> \${s.command}</div>
+              <div class="schedule-details"><strong>Last Run:</strong> \${lastRun}</div>
+              <div class="schedule-details"><strong>Next Run:</strong> \${nextRun}</div>
+            </div>\`;
+          }).join('');
+        }
+
+        // Memory Structure
+        if (memory.statistics) {
+          const stats = memory.statistics;
+          document.getElementById('memory-total').textContent = stats.totalFiles.toString();
+          document.getElementById('memory-unknown').textContent = \`\${stats.byType.unknown || 0} unknown\`;
+          document.getElementById('memory-user').textContent = (stats.byType.user || 0).toString();
+          document.getElementById('memory-feedback').textContent = (stats.byType.feedback || 0).toString();
+          document.getElementById('memory-project').textContent = (stats.byType.project || 0).toString();
+          document.getElementById('memory-reference').textContent = (stats.byType.reference || 0).toString();
+          document.getElementById('memory-pattern').textContent = (stats.byType.pattern || 0).toString();
+
+          // Render memory tree
+          const memoryTreeDiv = document.getElementById('memory-tree');
+          function renderDirectory(dir, depth = 0) {
+            const indent = depth * 20;
+            let html = '';
+
+            if (dir.subdirectories && dir.subdirectories.length > 0) {
+              for (const subdir of dir.subdirectories) {
+                html += \`<div style="margin-left: \${indent}px; margin-top: 8px;">
+                  <strong style="color: #58a6ff;">📁 \${subdir.name}</strong>
+                  <span style="color: #7d8590; font-size: 12px; margin-left: 8px;">
+                    (\${subdir.files.length} files)
+                  </span>
+                </div>\`;
+
+                if (subdir.files.length > 0) {
+                  for (const file of subdir.files) {
+                    const typeColor = file.type === 'unknown' ? '#6e7681' :
+                                      file.type === 'user' ? '#3fb950' :
+                                      file.type === 'feedback' ? '#d29922' :
+                                      file.type === 'project' ? '#58a6ff' :
+                                      file.type === 'reference' ? '#a371f7' :
+                                      file.type === 'pattern' ? '#f85149' : '#8b949e';
+
+                    html += \`<div style="margin-left: \${indent + 20}px; padding: 4px 0; font-size: 13px;">
+                      <span style="color: \${typeColor};">📄</span>
+                      <span style="color: #c9d1d9;">\${file.name}</span>
+                      \${file.description ? \`<span style="color: #7d8590; font-size: 12px; margin-left: 8px;">– \${file.description}</span>\` : ''}
+                    </div>\`;
+                  }
+                }
+
+                html += renderDirectory(subdir, depth + 1);
+              }
+            }
+
+            return html;
+          }
+
+          if (memory.structure) {
+            let treeHtml = '';
+
+            // Root level files
+            if (memory.structure.files.length > 0) {
+              treeHtml += '<div style="margin-bottom: 12px;">';
+              for (const file of memory.structure.files) {
+                treeHtml += \`<div style="padding: 4px 0; font-size: 13px;">
+                  <span style="color: #8b949e;">📄</span>
+                  <span style="color: #c9d1d9;">\${file.name}</span>
+                </div>\`;
+              }
+              treeHtml += '</div>';
+            }
+
+            treeHtml += renderDirectory(memory.structure);
+            memoryTreeDiv.innerHTML = treeHtml || '<div class="empty-state">No memory files found</div>';
+          }
+        }
+
+        // Update timestamp
+        document.getElementById('timestamp').textContent =
+          'Last updated: ' + new Date().toLocaleString();
+
+      } catch (err) {
+        console.error('Failed to fetch dashboard data:', err);
+      }
+
+      setTimeout(() => indicator.classList.remove('show'), 500);
+    }
+
+    // Initial fetch
+    fetchAllData();
+
+    // Auto-refresh every 5 seconds
+    setInterval(fetchAllData, 5000);
+  </script>
+</body>
+</html>`);
+});
+
+// Only start server if running directly (not during tests)
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Agent Dashboard running at http://localhost:${PORT}`);
+  });
+}
+
+export default app;

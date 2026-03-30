@@ -1,0 +1,5 @@
+{
+  "_readme": "Map project names to Telegram thread IDs. Use /threads set <name> <id> in Telegram to add entries.",
+  "agent-tools": null,
+  "agent-dashboard": null
+}

@@ -1,47 +1,155 @@
 #!/usr/bin/env node
 /**
- * Decider — the autonomous decision engine.
+ * Decider — autonomous context-driven decision engine.
  *
- * Called by the work loop every 10 minutes.
- * Returns what the agent should do next (or nothing).
+ * Called by the work loop every 10 minutes (or immediately after a sprint task completes).
+ * Decides what to work on next WITHOUT requiring manual goals.
  *
- * Decision priority:
+ * How it works (sprint-first, OpenClaw-style):
  *   1. Active workers at capacity? → wait
- *   2. Orphaned in-progress task (marked but no worker)? → restart it
- *   3. Pending tasks in TASKS.md? → execute next
- *   4. Active goals with "next action" defined? → do that
- *   5. Active goals but no clear next action? → ask Claude to decide (costs API)
- *   6. Nothing? → wait
+ *   2. GitHub Issues backlog? → pick next issue immediately (sprint mode)
+ *   3. Orphaned in-progress task? → restart it
+ *   4. Pending tasks in TASKS.md? → execute next (highest priority)
+ *   5. Gather FULL context + PROJECT.md briefs + recent work
+ *   6. Ask Claude: "given everything you see, what's the single best thing to do right now?"
+ *   7. Claude returns a specific, actionable task — agent does it
  *
- * Usage:
- *   const { decide } = require('./lib/decider');
- *   const decision = await decide(workers.listActive());
- *   // { action: 'work'|'wait', taskId, prompt, reason }
+ * No goals.md required. GitHub Issues is the source of truth for sprint work.
  */
 
 'use strict';
 
 const path          = require('path');
-const { parseTasks} = require('./task-queue');
+const fs            = require('fs');
+const { parseTasks, markInProgress } = require('./task-queue');
 const { runClaude } = require('./claude-runner');
 const memory        = require('./memory');
+const gitOps        = require('./git-ops');
+const { config }    = require('./config');
+const gh            = require('./github-issues');
+const sprintMgr     = require('./sprint-manager');
 
 const ROOT       = path.resolve(__dirname, '..', '..');
 const TASKS_FILE = path.join(ROOT, 'memory', 'TASKS.md');
+const INTEL_FILE = path.join(ROOT, 'memory', 'areas', 'social-intel.md');
 
-// Max concurrent workers before pausing new work
+// Max concurrent workers before pausing
 const MAX_CONCURRENT_WORKERS = 2;
 
+// ── Context gathering ─────────────────────────────────────────────────────────
+
 /**
- * Decide what to do next.
- *
+ * Build rich context for the decision engine.
+ * Reads: git status, projects, recent intel, recent work log, existing tasks.
+ */
+function gatherContext() {
+  const lines = [];
+
+  // 1. Repo state
+  lines.push('=== REPO STATE ===');
+  lines.push(gitOps.getRepoContext());
+
+  // 2. Projects
+  const projectsDir = path.join(ROOT, 'projects');
+  const projects = fs.existsSync(projectsDir)
+    ? fs.readdirSync(projectsDir).filter(d => {
+        if (d === '_template') return false;
+        return fs.statSync(path.join(projectsDir, d)).isDirectory();
+      })
+    : [];
+
+  if (projects.length > 0) {
+    lines.push('', '=== ACTIVE PROJECTS ===');
+    for (const proj of projects.slice(0, 5)) {
+      const projDir = path.join(projectsDir, proj);
+      const hasPackage = fs.existsSync(path.join(projDir, 'package.json'));
+      const hasSrc     = fs.existsSync(path.join(projDir, 'src'));
+      const hasTests   = fs.existsSync(path.join(projDir, 'tests'));
+      lines.push(`- ${proj}: ${[
+        hasPackage ? 'has package.json' : 'no package.json',
+        hasSrc     ? 'has src/'        : 'no src/',
+        hasTests   ? 'has tests/'      : 'no tests/',
+      ].join(', ')}`);
+
+      // Read package.json name/description if exists
+      if (hasPackage) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(projDir, 'package.json'), 'utf8'));
+          if (pkg.description) lines.push(`  Description: ${pkg.description}`);
+        } catch {}
+      }
+    }
+  } else {
+    lines.push('', '=== PROJECTS ===');
+    lines.push('No projects in projects/ yet (only _template exists)');
+  }
+
+  // 3. Scripts overview
+  const scriptsDir = path.join(ROOT, 'scripts');
+  if (fs.existsSync(scriptsDir)) {
+    lines.push('', '=== SCRIPTS (the agent itself) ===');
+    const scriptFiles = [];
+    try {
+      scriptFiles.push(...fs.readdirSync(scriptsDir)
+        .filter(f => f.endsWith('.js'))
+        .map(f => `scripts/${f}`));
+      const libFiles = fs.existsSync(path.join(scriptsDir, 'lib'))
+        ? fs.readdirSync(path.join(scriptsDir, 'lib')).filter(f => f.endsWith('.js')).map(f => `scripts/lib/${f}`)
+        : [];
+      const agentFiles = fs.existsSync(path.join(scriptsDir, 'agents'))
+        ? fs.readdirSync(path.join(scriptsDir, 'agents')).filter(f => f.endsWith('.js')).map(f => `scripts/agents/${f}`)
+        : [];
+      scriptFiles.push(...libFiles, ...agentFiles);
+    } catch {}
+    lines.push(scriptFiles.slice(0, 20).join(', '));
+  }
+
+  // 4. Recent intel (last 3 items from social-intel.md)
+  if (fs.existsSync(INTEL_FILE)) {
+    const intel = fs.readFileSync(INTEL_FILE, 'utf8');
+    const links = intel.split('\n')
+      .filter(l => l.includes('](') && l.startsWith('•'))
+      .slice(0, 3);
+    if (links.length > 0) {
+      lines.push('', '=== RECENT INTEL ===');
+      lines.push(links.join('\n'));
+    }
+  }
+
+  // 5. Today's work log (last 10 entries)
+  const todayLog = memory.readToday();
+  if (todayLog) {
+    const entries = todayLog.split('\n').filter(l => l.startsWith('- ')).slice(-10);
+    if (entries.length > 0) {
+      lines.push('', '=== TODAY\'S LOG (last 10 entries) ===');
+      lines.push(entries.join('\n'));
+    }
+  }
+
+  // 6. Pending tasks
+  const { pending, inProgress } = parseTasks(TASKS_FILE);
+  if (pending.length > 0 || inProgress.length > 0) {
+    lines.push('', '=== TASK QUEUE ===');
+    inProgress.forEach(t => lines.push(`[IN PROGRESS] ${t.id}: ${t.desc.slice(0, 80)}`));
+    pending.slice(0, 5).forEach(t => lines.push(`[PENDING] ${t.id}: ${t.desc.slice(0, 80)}`));
+  }
+
+  // 7. Goals (if any active ones exist)
+  const goals = memory.readGoals();
+  const activeGoalsSection = goals.match(/## Active Goals\n([\s\S]*?)(?=\n## |$)/)?.[1]?.trim();
+  if (activeGoalsSection && activeGoalsSection !== '*(No active goals at the moment)*' && activeGoalsSection.length > 10) {
+    lines.push('', '=== ACTIVE GOALS (from goals.md) ===');
+    lines.push(activeGoalsSection.slice(0, 1500));
+  }
+
+  return lines.join('\n');
+}
+
+// ── Main decide function ──────────────────────────────────────────────────────
+
+/**
  * @param {Array} activeWorkerList - Result of workers.listActive()
- * @returns {Promise<{
- *   action: 'work' | 'wait',
- *   taskId: string | null,
- *   prompt: string | null,
- *   reason: string
- * }>}
+ * @returns {Promise<{ action: 'work'|'wait', taskId: string|null, prompt: string|null, reason: string }>}
  */
 async function decide(activeWorkerList) {
 
@@ -55,22 +163,67 @@ async function decide(activeWorkerList) {
     };
   }
 
-  // ── 2. Check for orphaned in-progress tasks ────────────────────────────────
+  // ── 2. GitHub Issues backlog — sprint work takes top priority ────────────
+  if (gh.isConfigured()) {
+    try {
+      const backlog = await gh.getBacklog();
+      if (backlog.length > 0) {
+        const issue = backlog[0];
+        const projectName = sprintMgr.listSprintableProjects().find(p =>
+          issue.title.toLowerCase().includes(p.toLowerCase().replace(/-/g, ' ')) ||
+          issue.title.toLowerCase().includes(p.toLowerCase())
+        );
+        const brief = projectName ? sprintMgr.readProjectBrief(projectName) : null;
+
+        const sprintGoal  = brief?.match(/## Current Sprint Goal\n([\s\S]*?)(?=\n## |$)/)?.[1]?.trim() || '';
+        const constraints = brief?.match(/## Constraints\n([\s\S]*?)(?=\n## |$)/)?.[1]?.trim() || '';
+        const stack       = brief?.match(/## Stack\n([\s\S]*?)(?=\n## |$)/)?.[1]?.trim() || '';
+
+        const prompt = [
+          `## Task: ${issue.title}`,
+          `GitHub Issue: #${issue.number} (${issue.url})`,
+          '',
+          projectName ? `Project: projects/${projectName}` : '',
+          sprintGoal  ? `Sprint goal: ${sprintGoal}` : '',
+          stack       ? `Stack: ${stack}` : '',
+          constraints ? `Constraints:\n${constraints}` : '',
+          '',
+          '## Instructions',
+          '1. Read existing code in the project directory first',
+          '2. Implement the feature described in the issue title',
+          '3. Write tests — all tests must pass (npm test)',
+          '4. Do NOT commit — the validator handles commits',
+          '5. Output a one-line summary of what you built when done',
+        ].filter(Boolean).join('\n');
+
+        return {
+          action: 'work',
+          taskId: `ISSUE-${issue.number}`,
+          prompt,
+          reason: `GitHub Issue #${issue.number}: ${issue.title}`,
+        };
+      }
+    } catch (err) {
+      memory.log(`Decider: GitHub Issues check failed — ${err.message}`);
+    }
+  }
+
+  // ── 3. Orphaned in-progress tasks ─────────────────────────────────────────
   const { pending, inProgress } = parseTasks(TASKS_FILE);
   const activeIds = new Set(activeWorkerList.map(w => w.id));
+  const orphaned  = inProgress.filter(t => !activeIds.has(t.id));
 
-  const orphaned = inProgress.filter(t => !activeIds.has(t.id));
   if (orphaned.length > 0) {
     const t = orphaned[0];
     return {
       action: 'work',
       taskId: t.id,
       prompt: t.desc,
-      reason: `Resuming orphaned task ${t.id} (was in-progress but no worker running)`,
+      reason: `Resuming orphaned task ${t.id}`,
     };
   }
 
-  // ── 3. Execute next pending queued task ────────────────────────────────────
+  // ── 4. Execute next pending queued task ───────────────────────────────────
   if (pending.length > 0) {
     const next = pending[0];
     return {
@@ -81,82 +234,118 @@ async function decide(activeWorkerList) {
     };
   }
 
-  // ── 4. Check goals for a defined "next action" ────────────────────────────
-  const goals = memory.readGoals();
-  const hasActiveGoals = goals.includes('## Active Goals') &&
-    !goals.match(/## Active Goals\s*\n\s*\*\(none\)\*/) &&
-    !goals.match(/## Active Goals\s*\n\s*---\s*\n\s*\n\s*##/);
+  // ── 4. Autonomous context-driven decision (no goals required) ─────────────
+  // This is the OpenClaw-style autonomous mode.
+  // Gather full context and ask Claude what to work on next.
 
-  if (!hasActiveGoals) {
-    return {
-      action: 'wait',
-      taskId: null,
-      prompt: null,
-      reason: 'No queued tasks and no active goals',
-    };
-  }
+  // Log Claude CLI being used (for debugging)
+  memory.log(`Decider: using Claude CLI at ${config.claude.cmd}`);
 
-  // Extract "Next action:" from goals if it's clearly defined
-  const nextActionMatch = goals.match(/\*\*Next action:\*\*\s*(.+?)(?:\n|$)/);
-  if (nextActionMatch) {
-    const nextAction = nextActionMatch[1].trim();
-    // Don't re-do something that was logged today
-    const dailyLog = memory.readToday();
-    if (!dailyLog.toLowerCase().includes(nextAction.toLowerCase().slice(0, 30))) {
+  const context = gatherContext();
+
+  const systemCtx = memory.buildSystemContext();
+
+  const decisionPrompt = [
+    systemCtx,
+    '',
+    '=== AUTONOMOUS DECISION REQUEST ===',
+    '',
+    context,
+    '',
+    '=== INSTRUCTIONS ===',
+    '',
+    'You are the autonomous decision engine for Maxim\'s AI development agent.',
+    'Your job: look at the full context above and decide ONE specific, valuable task to work on right now.',
+    '',
+    'How to think (like a senior engineer):',
+    '- What is incomplete or broken that would block further progress?',
+    '- What would most improve the agent\'s capabilities or the codebase?',
+    '- Is there new intel worth implementing as a feature?',
+    '- Is there a test missing for existing code?',
+    '- Can any script or agent be made more robust?',
+    '',
+    'Rules:',
+    '- Task must be completable in under 30 minutes',
+    '- Be SPECIFIC — not "improve the agent" but "add error handling to scripts/lib/git-ops.js getStatus() function"',
+    '- Do NOT repeat what was already done today (check the log above)',
+    '- Prefer tasks that directly make the agent more autonomous and capable',
+    '- If the agent is already working well and nothing is obviously broken, create a meaningful project in projects/',
+    '',
+    'Output ONLY a JSON object on the LAST LINE of your response:',
+    '{"action":"work","prompt":"[precise task description — what to do, which files, what the output should be]","reason":"[1 sentence: why this is the most valuable thing right now]"}',
+    'OR if truly nothing is useful:',
+    '{"action":"wait","prompt":null,"reason":"[why waiting is correct]"}',
+  ].join('\n');
+
+  try {
+    // Sonnet is fast enough for decision-making
+    const result = await runClaude(decisionPrompt, { timeoutMs: 90000, model: 'sonnet' });
+
+    // Log the result for debugging
+    if (!result.success) {
+      memory.log(`Decider: runClaude failed — ${result.output?.slice(0, 200) || 'no output'}`);
       return {
-        action: 'work',
+        action: 'wait',
         taskId: null,
-        prompt: nextAction,
-        reason: `From goals "next action": ${nextAction.slice(0, 60)}`,
+        prompt: null,
+        reason: `Decision engine error: ${result.output?.slice(0, 100) || 'runClaude failed'}`,
       };
     }
-  }
 
-  // ── 5. Ask Claude to decide (API cost — only when goals exist but no clear next step) ──
-  try {
-    const systemCtx = memory.buildSystemContext();
-    const decisionPrompt = [
-      systemCtx,
-      '=== DECISION REQUEST ===',
-      '',
-      'You are the autonomous agent\'s decision engine.',
-      'Based on the active goals and today\'s log above, decide ONE specific action to take right now.',
-      '',
-      'Rules:',
-      '- Only suggest actions that directly advance an Active Goal',
-      '- The action must be completable in under 30 minutes',
-      '- Do not repeat anything already done today (check the daily log)',
-      '- Be specific — not "work on the project" but "create scripts/lib/memory.js with these functions"',
-      '- If nothing useful can be done right now, say wait',
-      '',
-      'Output ONLY a single JSON object on the last line of your response:',
-      '{"action":"work","prompt":"[specific task description]","reason":"[why this advances the goal]"}',
-      'OR:',
-      '{"action":"wait","prompt":null,"reason":"[why waiting is correct right now]"}',
-    ].join('\n');
-
-    // Opus for strategic decisions only — this is the one place it's worth the cost
-    const result = await runClaude(decisionPrompt, { timeoutMs: 60000, model: 'opus' });
-
-    if (result.structured && (result.structured.action === 'work' || result.structured.action === 'wait')) {
+    // Check if we got structured output
+    if (result.structured &&
+        (result.structured.action === 'work' || result.structured.action === 'wait') &&
+        (result.structured.action !== 'work' || result.structured.prompt)) {
+      memory.log(`Decider: autonomous decision — ${result.structured.action} — ${result.structured.reason?.slice(0, 100)}`);
       return {
         action: result.structured.action,
         taskId: null,
         prompt: result.structured.prompt || null,
-        reason: result.structured.reason || 'Claude decision engine',
+        reason: result.structured.reason  || 'Autonomous decision',
       };
     }
-  } catch (err) {
-    memory.log(`Decider: Claude decision engine error — ${err.message}`);
-  }
 
-  // ── 6. Default: wait ───────────────────────────────────────────────────────
-  return {
-    action: 'wait',
-    taskId: null,
-    prompt: null,
-    reason: 'No actionable work identified',
-  };
+    // If structured parse failed but output looks like a task, try to use it
+    if (result.output && result.output.length > 50) {
+      // Try extracting JSON anywhere in output (more flexible pattern)
+      const jsonMatch = result.output.match(/\{[\s\S]*?"action"\s*:\s*"(work|wait)"[\s\S]*?\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.action === 'work' && parsed.prompt) {
+            memory.log(`Decider: parsed JSON from output — work — ${parsed.reason?.slice(0, 100)}`);
+            return { action: 'work', taskId: null, prompt: parsed.prompt, reason: parsed.reason || 'Autonomous decision' };
+          } else if (parsed.action === 'wait') {
+            memory.log(`Decider: parsed JSON from output — wait — ${parsed.reason?.slice(0, 100)}`);
+            return { action: 'wait', taskId: null, prompt: null, reason: parsed.reason || 'Agent decided to wait' };
+          }
+        } catch (parseErr) {
+          memory.log(`Decider: JSON parse failed — ${parseErr.message}`);
+        }
+      }
+    }
+
+    // Log when we can't parse the output
+    memory.log(`Decider: could not parse output (${result.output?.length || 0} chars) — structured=${!!result.structured}, first 200: ${result.output?.slice(0, 200)}`);
+
+    // If we got output but couldn't parse it, that's still valuable information
+    return {
+      action: 'wait',
+      taskId: null,
+      prompt: null,
+      reason: `Could not parse decision output (got ${result.output?.length || 0} chars)`,
+    };
+
+  } catch (err) {
+    // Log full error details
+    memory.log(`Decider: exception — ${err.message} — ${err.stack?.split('\n')[1]?.trim()}`);
+    return {
+      action: 'wait',
+      taskId: null,
+      prompt: null,
+      reason: `Decision engine exception: ${err.message}`,
+    };
+  }
 }
 
 module.exports = { decide };

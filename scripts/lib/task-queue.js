@@ -8,10 +8,8 @@
  * and tagged format:
  *   - [ ] TASK-016 | [dev] description
  *
- * Supported tags: [dev] [deploy] [qa] [monitor] [jira] [calendar]
+ * Supported tags: [dev] [deploy] [qa] [monitor] [calendar]
  * No tag defaults to [dev].
- *
- * Jira/Linear IDs (e.g. JIRA-123, LINEAR-456) are extracted from the description.
  */
 
 'use strict';
@@ -25,17 +23,17 @@ const EMPTY_QUEUE =
   '## \uD83D\uDCCB Pending\n\n' +
   '## \u2705 Completed\n';
 
-// Regex anchors for the three sections
-const SECTION_IN_PROGRESS = /## 🔄 In Progress\n/;
-const SECTION_PENDING      = /## 📋 Pending\n/;
-const SECTION_COMPLETED    = /## ✅ Completed\n/;
+// Regex anchors for the three sections (handle both \r\n and \n)
+const SECTION_IN_PROGRESS = /## 🔄 In Progress\r?\n/;
+const SECTION_PENDING      = /## 📋 Pending\r?\n/;
+const SECTION_COMPLETED    = /## ✅ Completed\r?\n/;
 
-const VALID_TAGS = ['dev', 'deploy', 'qa', 'monitor', 'jira', 'calendar'];
+const VALID_TAGS = ['dev', 'deploy', 'qa', 'monitor', 'calendar'];
 
 /**
  * Extract structured fields from a raw task line.
  * @param {string} line
- * @returns {{ id: string, desc: string, raw: string, tag: string, projectName: string|null, jiraId: string|null }|null}
+ * @returns {{ id: string, desc: string, raw: string, tag: string, projectName: string|null }|null}
  */
 function parseLine(line) {
   // Must be a checkbox item
@@ -61,15 +59,11 @@ function parseLine(line) {
     desc = cleanDesc.slice(tagMatch[0].length).trim();
   }
 
-  // Extract Jira/Linear ID from description
-  const jiraMatch = desc.match(/\b(JIRA-\d+|LINEAR-\d+)\b/i);
-  const jiraId    = jiraMatch ? jiraMatch[1].toUpperCase() : null;
-
   // Extract project name: first word in UPPER_CASE or CamelCase before a colon
   const projMatch = desc.match(/^([A-Z][A-Za-z0-9_-]+):/);
   const projectName = projMatch ? projMatch[1] : null;
 
-  return { id, desc, raw: line, tag, projectName, jiraId };
+  return { id, desc, raw: line, tag, projectName };
 }
 
 /**

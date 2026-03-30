@@ -38,6 +38,7 @@ const memory     = require('./lib/memory');
 const workers    = require('./lib/workers');
 const { decide } = require('./lib/decider');
 const scheduler  = require('./lib/scheduler');
+const scheduleManager = require('./lib/schedule-manager');
 const {
   parseTasks,
   addTask,
@@ -45,10 +46,14 @@ const {
   markCompleted,
   markBlocked,
 } = require('./lib/task-queue');
-const { runClaude } = require('./lib/claude-runner');
-const socialMonitor = require('./agents/social-monitor-agent');
-const dashboard     = require('./lib/dashboard');
+const { runClaude }  = require('./lib/claude-runner');
+const socialMonitor  = require('./agents/social-monitor-agent');
+const dashboard      = require('./lib/dashboard');
 const { processVideo, extractVideoUrl } = require('./agents/video-intel-agent');
+const sprintMgr = require('./lib/sprint-manager');
+const changeValidator = require('./agents/change-validator');
+const usageTracker   = require('./lib/usage-tracker');
+const projectThreads = require('./lib/project-threads');
 
 const { spawn, execSync } = require('child_process');
 const path = require('path');
@@ -148,6 +153,18 @@ async function notifyIntel(text) {
 }
 
 /**
+ * Route a sprint/standup message to the project's own Telegram thread.
+ * Falls back to main group if the project has no thread configured.
+ *
+ * @param {string} projectName
+ * @param {string} text
+ */
+async function notifyProject(projectName, text) {
+  const threadId = projectThreads.getThreadId(projectName);
+  await sendMsg(GROUP_ID, text, threadId);
+}
+
+/**
  * Post an idea card to the New Project topic with inline approval buttons.
  * Falls back to main group if THREAD_NEW_PROJECT not set.
  */
@@ -192,6 +209,39 @@ async function sendIdeaCard(item) {
   });
 }
 
+/**
+ * Send a PR approval card to the main group.
+ * Buttons: ✅ Merge | ❌ Skip
+ */
+async function sendPRApproval({ prNumber, prUrl, branch, commitSha, summary, score }) {
+  const sha   = commitSha ? `\`${commitSha}\`` : '–';
+  const scoreEmoji = score >= 8 ? '🟢' : score >= 6 ? '🟡' : '🔴';
+
+  const text = [
+    `🔀 *PR #${prNumber} ready for review*`,
+    '',
+    summary ? `_${summary.slice(0, 120)}_` : '',
+    '',
+    `${scoreEmoji} Score: ${score}/10  |  Commit: ${sha}`,
+    `Branch: \`${branch}\``,
+    `[View PR](${prUrl})`,
+    '',
+    'Merge into main?',
+  ].filter(l => l !== undefined).join('\n');
+
+  await tg('sendMessage', {
+    chat_id:    GROUP_ID,
+    text,
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Merge', callback_data: `pr_merge:${prNumber}` },
+        { text: '❌ Skip',  callback_data: `pr_skip:${prNumber}`  },
+      ]],
+    },
+  });
+}
+
 /** Handle an inline keyboard button press */
 async function handleCallbackQuery(query) {
   const cbId   = query.id;
@@ -205,10 +255,53 @@ async function handleCallbackQuery(query) {
 
   const colonIdx = data.indexOf(':');
   if (colonIdx === -1) return;
-  const action = data.slice(0, colonIdx);
-  const ideaId = data.slice(colonIdx + 1);
+  const action  = data.slice(0, colonIdx);
+  const payload = data.slice(colonIdx + 1);
 
-  const item = pendingIdeas.get(ideaId);
+  // ── PR merge approval ──────────────────────────────────────────────────────
+  if (action === 'pr_merge' || action === 'pr_skip') {
+    const prNumber = parseInt(payload, 10);
+    log(`[Callback] ${from} chose "${action}" for PR #${prNumber}`);
+
+    if (action === 'pr_skip') {
+      await tg('editMessageText', {
+        chat_id:    chatId,
+        message_id: msgId,
+        text:       `⏭️ *PR #${prNumber} skipped*\n_Left open for review_`,
+        parse_mode: 'Markdown',
+      });
+      return;
+    }
+
+    // pr_merge — call GitHub API to squash-merge
+    await tg('editMessageText', {
+      chat_id:    chatId,
+      message_id: msgId,
+      text:       `⏳ Merging PR #${prNumber}...`,
+    });
+
+    const gh = require('./lib/github-issues');
+    const result = await gh.mergePR(prNumber);
+
+    const text = result.success
+      ? `✅ *PR #${prNumber} merged!*\n_${result.message}_`
+      : `❌ *Merge failed for PR #${prNumber}*\n\`${result.message}\``;
+
+    await tg('editMessageText', {
+      chat_id:    chatId,
+      message_id: msgId,
+      text,
+      parse_mode: 'Markdown',
+    });
+
+    if (result.success) {
+      memory.log(`PR #${prNumber} merged by ${from}`);
+    }
+    return;
+  }
+
+  // ── Idea approval ──────────────────────────────────────────────────────────
+  const item = pendingIdeas.get(payload);
   if (!item) {
     await tg('editMessageText', {
       chat_id:    chatId,
@@ -218,7 +311,7 @@ async function handleCallbackQuery(query) {
     return;
   }
 
-  pendingIdeas.delete(ideaId);
+  pendingIdeas.delete(payload);
   log(`[Callback] ${from} chose "${action}" for: ${item.title.slice(0, 60)}`);
 
   let resultText = '';
@@ -306,12 +399,11 @@ function buildChatPrompt(chatId, threadId, userText) {
 
 // ── Worker event handlers ─────────────────────────────────────────────────────
 
-workers.onComplete((workerId, output, structured) => {
+workers.onComplete(async (workerId, output, structured) => {
   log(`✅ Worker done: ${workerId}`);
 
-  const summary = structured?.summary || output.slice(0, 500);
+  const summary   = structured?.summary || output.slice(0, 500);
   const isBlocked = structured?.status === 'blocked';
-  const emoji   = isBlocked ? '🚫' : '✅';
 
   // Update TASKS.md if this was a queued task
   if (workerId.match(/^TASK-\d+$/)) {
@@ -326,11 +418,67 @@ workers.onComplete((workerId, output, structured) => {
     }
   }
 
-  // Notify Maxim
-  const nextAction = structured?.nextAction
-    ? `\n\n*Next action needed:* ${structured.nextAction}`
-    : '';
-  notify(`${emoji} *${workerId} complete*\n${summary}${nextAction}`);
+  // Run change validator: checks diff, auto-commits, creates GitHub Issue, sends standup
+  let validatorResult = { committed: false, sha: null, issueUrl: null };
+  if (!isBlocked) {
+    try {
+      // Route standup to the project's own Telegram thread (or main group if not mapped)
+      const projectName = sprintMgr.getStatus().project || null;
+      const standupNotify = (msg) => notifyProject(projectName, msg);
+
+      validatorResult = await changeValidator.validate(workerId, output, { notifyMain: standupNotify });
+    } catch (err) {
+      log(`[Validator] Error: ${err.message}`);
+      memory.log(`Validator error for ${workerId}: ${err.message}`);
+      notify(`⚠️ *Validator error for \`${workerId}\`:* ${err.message}`);
+    }
+  } else {
+    // Blocked — notify urgently
+    notify(`🚫 *Worker blocked:* \`${workerId}\`\n${summary}`);
+  }
+
+  // ── PR approval card ───────────────────────────────────────────────────────
+  if (validatorResult.prUrl && validatorResult.prNumber) {
+    try {
+      await sendPRApproval({
+        prNumber:  validatorResult.prNumber,
+        prUrl:     validatorResult.prUrl,
+        branch:    require('./lib/git-ops').getBranch(),
+        commitSha: validatorResult.sha,
+        summary:   validatorResult.suggestions?.[0] || summary.slice(0, 100),
+        score:     validatorResult.score || 6,
+      });
+    } catch (err) {
+      log(`[PR] sendPRApproval error: ${err.message}`);
+    }
+  }
+
+  // ── Continuous sprint: immediately pick next task from backlog ────────────
+  // Don't wait 10 minutes — if there's more work, do it now.
+  if (!isBlocked) {
+    try {
+      const sprint = await sprintMgr.onWorkerDone(
+        workerId,
+        validatorResult.sha,
+        summary,
+        notify  // sprint-complete Telegram notification
+      );
+
+      if (sprint.hasMore && sprint.nextPrompt) {
+        const nextId = `ISSUE-${sprint.issueNumber || Date.now()}`;
+        log(`[Sprint] Continuing — next: ${sprint.issueTitle || nextId}`);
+        memory.log(`Sprint: starting ${nextId} — ${(sprint.issueTitle || '').slice(0, 60)}`);
+
+        // Small pause before next task (let filesystem settle)
+        await new Promise(r => setTimeout(r, 3000));
+        workers.spawnWorker(nextId, sprint.nextPrompt);
+      } else {
+        log('[Sprint] Backlog empty — entering idle mode (next check in 10 min)');
+      }
+    } catch (err) {
+      log(`[Sprint] onWorkerDone error: ${err.message}`);
+    }
+  }
 });
 
 workers.onError((workerId, errorMsg) => {
@@ -385,7 +533,14 @@ async function dispatchCommand(chatId, thread, text, msgId) {
       '`/goals`     — Current goals',
       '`/workers`   — Running background workers',
       '`/schedule`  — Scheduled jobs',
-      '`/monitor`   — Run intel scraper now (morning brief on demand)',
+      '`/usage`     — Claude API call stats for this session',
+      '`/threads`   — View/set per-project Telegram topic routing',
+      '`/monitor`   — Run intel scraper now (all platforms)',
+      '`/monitor-twitter` — Twitter monitoring only',
+      '`/monitor-tiktok` — TikTok trends only',
+      '`/monitor-instagram` — Instagram monitoring only',
+      '`/monitor-linkedin` — LinkedIn monitoring only',
+      '`/intel [platform]` — Show recent intel (filter by platform)',
       '',
       '*Video summarizer (just paste a URL):*',
       '`tiktok.com/...`   — Summarize TikTok into bullet points',
@@ -414,6 +569,7 @@ async function dispatchCommand(chatId, thread, text, msgId) {
     const active = workers.listActive();
     const { pending, inProgress } = parseTasks(TASKS_FILE);
     const jobs = scheduler.list();
+    const sprintStatus = sprintMgr.getStatus();
 
     const lines = [
       '⚙️ *Agent Status*',
@@ -422,6 +578,15 @@ async function dispatchCommand(chatId, thread, text, msgId) {
       `• Tasks in progress: \`${inProgress.length}\``,
       `• Scheduled jobs: \`${jobs.length}\``,
     ];
+
+    // Sprint status
+    if (sprintStatus.active) {
+      lines.push('', '🏃 *Active Sprint:*');
+      lines.push(`  • Project: \`${sprintStatus.project}\``);
+      lines.push(`  • Running: \`${sprintStatus.elapsedMin}m\``);
+      lines.push(`  • Completed: \`${sprintStatus.tasksCompleted}\` tasks`);
+      lines.push(`  • Commits: \`${sprintStatus.commits}\``);
+    }
 
     if (active.length > 0) {
       lines.push('', '*Running Workers:*');
@@ -436,6 +601,71 @@ async function dispatchCommand(chatId, thread, text, msgId) {
       for (const t of inProgress) lines.push(`  • \`${t.id}\` — ${t.desc.slice(0, 60)}`);
     }
 
+    await sendMsg(chatId, lines.join('\n'), thread);
+    return;
+  }
+
+  // ── /usage ────────────────────────────────────────────────────────────────
+  if (text === '/usage') {
+    const stats  = usageTracker.getSessionStats();
+    const recent = usageTracker.getRecentCalls(10);
+
+    const lines = [
+      '⚡ *Claude API Usage — This Session*',
+      `• Total calls: \`${stats.calls}\``,
+      `• Total chars sent: \`${Math.round(stats.chars / 1000)}k\``,
+      '',
+    ];
+
+    if (recent.length > 0) {
+      lines.push('*Last 10 calls:*');
+      recent.reverse().forEach((c, i) => {
+        const ts  = new Date(c.ts).toLocaleTimeString();
+        const sum = (c.summary || '').slice(0, 60);
+        lines.push(`\`${ts}\` #${c.call} [${c.model}] ${sum}`);
+      });
+    } else {
+      lines.push('_No calls this session yet_');
+    }
+
+    await sendMsg(chatId, lines.join('\n'), thread);
+    return;
+  }
+
+  // ── /threads ──────────────────────────────────────────────────────────────
+  // /threads                  → list all configured project threads
+  // /threads set <name> <id>  → register a project → thread mapping
+  if (text === '/threads' || text.startsWith('/threads ')) {
+    const parts = text.split(/\s+/);
+
+    if (parts.length >= 4 && parts[1] === 'set') {
+      // /threads set agent-tools 12
+      const projName = parts[2];
+      const tId      = parseInt(parts[3], 10);
+      if (isNaN(tId)) {
+        await sendMsg(chatId, '❌ Thread ID must be a number. Usage: `/threads set <project> <thread_id>`', thread);
+        return;
+      }
+      projectThreads.registerThread(projName, tId);
+      await sendMsg(chatId, `✅ *Registered:* \`${projName}\` → thread \`${tId}\`\n\nStandup messages for this project will now go to that thread.`, thread);
+      return;
+    }
+
+    // List all
+    const all   = projectThreads.listAll();
+    const lines = ['🗺️ *Project Thread Map*', ''];
+    const entries = Object.entries(all);
+    if (entries.length === 0) {
+      lines.push('_No projects mapped yet._');
+      lines.push('');
+      lines.push('To add one: `/threads set <project-name> <thread-id>`');
+      lines.push('To find thread IDs: run `/thread-ids` in any topic');
+    } else {
+      for (const [name, id] of entries) {
+        lines.push(`• \`${name}\` → thread \`${id}\``);
+      }
+      lines.push('', 'To add: `/threads set <name> <id>`');
+    }
     await sendMsg(chatId, lines.join('\n'), thread);
     return;
   }
@@ -486,7 +716,7 @@ async function dispatchCommand(chatId, thread, text, msgId) {
   }
 
   // ── /monitor ──────────────────────────────────────────────────────────────
-  if (text === '/monitor') {
+  if (text === '/monitor' || text === '/monitor-all') {
     await sendMsg(chatId, '🔍 *Running intel scraper now...* (takes ~60s)', thread);
     // Pass notifyIntel so digest posts to Social Monitor thread (thread 4)
     socialMonitor.run(notifyIntel)
@@ -512,6 +742,88 @@ async function dispatchCommand(chatId, thread, text, msgId) {
         log(`[Monitor] Error: ${err.message}`);
         sendMsg(chatId, `⚠️ Intel scraper error: ${err.message}`, thread);
       });
+    return;
+  }
+
+  // ── /monitor-twitter ──────────────────────────────────────────────────────
+  if (text === '/monitor-twitter') {
+    await sendMsg(chatId, '🐦 *Running Twitter monitor...* (takes ~30s)', thread);
+    const lastSeen = socialMonitor.loadLastSeen?.() || {};
+    socialMonitor.scrapeTwitter?.(lastSeen)
+      .then(items => {
+        sendMsg(chatId, `✅ *Twitter scan complete:* ${items.length} new tweets found`, thread);
+      })
+      .catch(err => {
+        sendMsg(chatId, `⚠️ Twitter monitor error: ${err.message}`, thread);
+      });
+    return;
+  }
+
+  // ── /monitor-tiktok ───────────────────────────────────────────────────────
+  if (text === '/monitor-tiktok') {
+    await sendMsg(chatId, '🎵 *Running TikTok monitor...* (takes ~30s)', thread);
+    const lastSeen = socialMonitor.loadLastSeen?.() || {};
+    socialMonitor.scrapeTikTok?.(lastSeen)
+      .then(items => {
+        sendMsg(chatId, `✅ *TikTok scan complete:* ${items.length} new videos found`, thread);
+      })
+      .catch(err => {
+        sendMsg(chatId, `⚠️ TikTok monitor error: ${err.message}`, thread);
+      });
+    return;
+  }
+
+  // ── /monitor-instagram ────────────────────────────────────────────────────
+  if (text === '/monitor-instagram') {
+    await sendMsg(chatId, '📷 *Running Instagram monitor...* (takes ~30s)', thread);
+    const lastSeen = socialMonitor.loadLastSeen?.() || {};
+    socialMonitor.scrapeInstagram?.(lastSeen)
+      .then(items => {
+        sendMsg(chatId, `✅ *Instagram scan complete:* ${items.length} new posts found`, thread);
+      })
+      .catch(err => {
+        sendMsg(chatId, `⚠️ Instagram monitor error: ${err.message}`, thread);
+      });
+    return;
+  }
+
+  // ── /monitor-linkedin ─────────────────────────────────────────────────────
+  if (text === '/monitor-linkedin') {
+    await sendMsg(chatId, '💼 *Running LinkedIn monitor...* (takes ~30s)', thread);
+    const lastSeen = socialMonitor.loadLastSeen?.() || {};
+    socialMonitor.scrapeLinkedIn?.(lastSeen)
+      .then(items => {
+        sendMsg(chatId, `✅ *LinkedIn scan complete:* ${items.length} new posts found`, thread);
+      })
+      .catch(err => {
+        sendMsg(chatId, `⚠️ LinkedIn monitor error: ${err.message}`, thread);
+      });
+    return;
+  }
+
+  // ── /intel [platform] ─────────────────────────────────────────────────────
+  const intelMatch = text.match(/^\/intel(?:\s+(\w+))?$/i);
+  if (intelMatch) {
+    const platform = intelMatch[1]?.toLowerCase();
+    const intelFile = path.join(ROOT, 'memory', 'areas', 'social-intel.md');
+
+    if (!fs.existsSync(intelFile)) {
+      await sendMsg(chatId, '📭 *No intel data yet.* Run `/monitor` first.', thread);
+      return;
+    }
+
+    const content = fs.readFileSync(intelFile, 'utf8');
+    const lines = content.split('\n');
+    const filtered = platform
+      ? lines.filter(l => l.toLowerCase().includes(platform))
+      : lines.slice(0, 100);
+
+    const preview = filtered.slice(0, 50).join('\n');
+    await sendMsg(
+      chatId,
+      `🧠 *Social Intel${platform ? ` — ${platform}` : ''}*\n\n${preview.slice(0, 3500)}`,
+      thread
+    );
     return;
   }
 
@@ -597,21 +909,25 @@ async function dispatchCommand(chatId, thread, text, msgId) {
 
 async function workLoop() {
   const active = workers.listActive();
+  // Only log to console for debugging, not to daily note
   log(`[Work] Tick — ${active.length} workers active`);
-  memory.log(`Work loop tick — ${active.length} workers running`);
 
   const decision = await decide(active);
-  log(`[Work] Decision: ${decision.action} — ${decision.reason}`);
 
+  // Silent wait — don't pollute the daily note with "waiting" entries
   if (decision.action === 'wait') {
-    memory.log(`Work loop: waiting — ${decision.reason}`);
+    log(`[Work] Decision: wait — ${decision.reason}`);
     return;
   }
 
   if (!decision.prompt) {
     log('[Work] Decision was "work" but no prompt — skipping');
+    memory.log('Work loop: decision was "work" but no prompt provided');
     return;
   }
+
+  // Only log to daily note when actually spawning work
+  log(`[Work] Decision: work — ${decision.reason}`);
 
   // Determine worker ID
   const workerId = decision.taskId || `AUTO-${Date.now()}`;
@@ -629,6 +945,115 @@ async function workLoop() {
   notify(`🚀 *Starting:* \`${workerId}\`\n${decision.prompt.slice(0, 200)}`);
 
   workers.spawnWorker(workerId, decision.prompt);
+}
+
+// ── 7 AM daily brief — GitHub + overnight summary ────────────────────────────
+
+async function dailyBrief() {
+  log('[Brief] Generating 7 AM daily brief...');
+  memory.log('Daily brief started (7 AM)');
+
+  const gitOps = require('./lib/git-ops');
+  const today  = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  // 1. GitHub: commits since yesterday midnight
+  const { execSync } = require('child_process');
+  let commits = '';
+  try {
+    const since = new Date(); since.setDate(since.getDate() - 1); since.setHours(0,0,0,0);
+    commits = execSync(
+      `git log --oneline --since="${since.toISOString()}" --pretty=format:"• %s (%h)"`,
+      { cwd: ROOT, encoding: 'utf8', stdio: 'pipe' }
+    ).trim();
+  } catch {}
+
+  // 2. Overnight work log (all entries from last 12h)
+  const dailyLog = memory.readToday();
+  const logEntries = (dailyLog || '').split('\n')
+    .filter(l => l.startsWith('- ') && !l.includes('Work loop tick') && !l.includes('Work loop: waiting'))
+    .slice(-20)
+    .join('\n');
+
+  // 4. Ask Claude to summarize
+  let summaryText = '';
+  try {
+    const prompt = [
+      'Generate a concise morning brief for an autonomous developer agent.',
+      '',
+      `Date: ${today}`,
+      '',
+      `Overnight activity log:\n${logEntries || '(no activity)'}`,
+      '',
+      `GitHub commits made overnight:\n${commits || '(none)'}`,
+      '',
+      'Write a 3-5 bullet point summary of what was accomplished overnight and what is in progress.',
+      'Be specific about what was built/fixed. Keep it concise for a morning Telegram message.',
+      'Output ONLY the bullet points, no extra text.',
+    ].join('\n');
+    const result = await runClaude(prompt, { timeoutMs: 30000, model: 'sonnet' });
+    summaryText = result.output?.trim() || '';
+  } catch {}
+
+  // 5. Build and send the brief
+  const lines = [
+    `🌅 *Daily Brief — ${today}*`,
+    '',
+    '📋 *What happened overnight:*',
+    summaryText || logEntries.slice(0, 600) || '_(agent was idle — no tasks to work on)_',
+    '',
+  ];
+
+  if (commits) {
+    lines.push('🔀 *GitHub commits:*', commits, '');
+  }
+
+  lines.push(
+    '⚙️ *Agent continues running* — work loop every 10 min',
+    '_Add tasks: `task: description` · Add goals: `goal: description`_',
+  );
+
+  await notify(lines.join('\n'));
+  memory.log('Daily brief sent to Telegram');
+  log('[Brief] Done.');
+}
+
+// ── Daily standup — sprint progress report ───────────────────────────────────
+
+async function dailyStandup() {
+  const sprintStatus = sprintMgr.getStatus();
+
+  if (!sprintStatus.active) {
+    log('[Standup] No active sprint — skipping standup');
+    return;
+  }
+
+  log('[Standup] Generating sprint standup...');
+  memory.log('Sprint standup started');
+
+  const gh = require('./lib/github-issues');
+  const boardUrl = gh.boardUrl();
+
+  // Get current backlog count
+  let backlogCount = 0;
+  try {
+    const backlog = await gh.getBacklog();
+    backlogCount = backlog.length;
+  } catch {}
+
+  const lines = [
+    '📊 *Daily Sprint Standup*',
+    '',
+    `🏃 *Project:* \`${sprintStatus.project}\``,
+    `⏱️ *Running:* ${sprintStatus.elapsedMin} minutes`,
+    `✅ *Completed:* ${sprintStatus.tasksCompleted} tasks`,
+    `🔀 *Commits:* ${sprintStatus.commits}`,
+    `📋 *Remaining:* ${backlogCount} backlog items`,
+    '',
+    `[View Sprint Board](${boardUrl})`,
+  ];
+
+  await notify(lines.join('\n'));
+  memory.log(`Sprint standup sent — ${sprintStatus.tasksCompleted} tasks completed, ${backlogCount} remaining`);
 }
 
 // ── Nightly consolidation — runs at 2:00 AM ───────────────────────────────────
@@ -744,6 +1169,30 @@ async function startTelegramPolling() {
 // ── Startup ───────────────────────────────────────────────────────────────────
 
 async function main() {
+  // ── Check for duplicate agent processes before starting ──────────────────────
+  try {
+    const processManagerPath = path.join(__dirname, 'process-manager.js');
+    execSync(`node "${processManagerPath}" --check`, {
+      stdio: 'pipe',
+      encoding: 'utf8'
+    });
+  } catch (err) {
+    // Exit code 1 means duplicates detected
+    if (err.status === 1) {
+      // Extract PIDs from stderr/stdout if available
+      const output = err.stdout || err.stderr || '';
+      const pidMatches = output.match(/PID\s+(\d+)/g) || [];
+      const pids = pidMatches.map(m => m.match(/\d+/)[0]).filter(pid => pid !== String(process.pid));
+
+      const pidList = pids.length > 0 ? pids.join(', ') : 'unknown';
+      console.error(`\n❌ ERROR: Another agent instance is already running (PID: ${pidList}).`);
+      console.error('Stop it first or use scripts/process-manager.js --status to investigate.\n');
+      process.exit(1);
+    }
+    // Other errors (like process-manager.js not found) should not block startup
+    console.warn(`⚠️  Warning: Could not check for duplicate processes: ${err.message}`);
+  }
+
   console.log('\n╔══════════════════════════════════════════════╗');
   console.log('║  Autonomous Agent — Booting                  ║');
   console.log(`║  ${new Date().toLocaleString().padEnd(44)}║`);
@@ -752,13 +1201,19 @@ async function main() {
   log('Agent starting...');
   memory.log('Agent started');
 
-  // Register work loop (every 10 min, run one cycle immediately)
-  scheduler.schedule('work-loop', workLoop, WORK_INTERVAL_MS, { runImmediately: true });
-  log(`[Scheduler] Work loop registered — every ${WORK_INTERVAL_MS / 60000} min`);
+  // Register core agent tasks with schedule manager
+  // Uses hybrid approach: in-process execution + external persistence/monitoring
+  const registrationResult = await scheduleManager.registerAgentTasks({
+    workLoopFn: workLoop,
+    dailyBriefFn: dailyBrief,
+    nightlyConsolidationFn: nightlyConsolidation,
+  });
 
-  // Register nightly consolidation at 2:00 AM
-  scheduler.scheduleDaily('nightly', 2, 0, nightlyConsolidation);
-  log('[Scheduler] Nightly consolidation registered — daily at 02:00');
+  if (registrationResult.mode === 'hybrid') {
+    log('[Scheduler] Mode: hybrid (in-process + external monitoring)');
+  } else {
+    log('[Scheduler] Mode: in-process only');
+  }
 
   // Register daily intel scraper at 8:00 AM
   scheduler.scheduleDaily('intel-scraper', 8, 0, async () => {
@@ -785,6 +1240,19 @@ async function main() {
   });
   log('[Scheduler] Intel scraper registered — daily at 08:00');
 
+  // Register daily sprint standup at 9:00 AM
+  scheduler.scheduleDaily('sprint-standup', 9, 0, async () => {
+    log('[Standup] Running daily sprint standup...');
+    try {
+      await dailyStandup();
+      log('[Standup] Done');
+    } catch (err) {
+      log(`[Standup] Error: ${err.message}`);
+      await notify(`⚠️ *Sprint standup error:* ${err.message}`);
+    }
+  });
+  log('[Scheduler] Sprint standup registered — daily at 09:00');
+
   // Start live dashboard HTTP server
   const dashPort = parseInt(process.env.DASHBOARD_PORT || '3000', 10);
   dashboard.start({
@@ -804,9 +1272,10 @@ async function main() {
     : `Set TELEGRAM_NEW_PROJECT_THREAD_ID in .env to enable idea cards`;
   await notify(
     `✅ *Agent online* — ${new Date().toLocaleString()}\n` +
-    `Work loop: every 10 min\n` +
-    `Nightly: 02:00 AM · Intel: 08:00 AM\n` +
-    `Intel digest → Social Monitor topic (thread ${THREAD_SOCIAL_MONITOR})\n` +
+    `⏱ Work loop: every 10 min (autonomous, no goals needed)\n` +
+    `🌅 Daily brief: 07:00 AM — GitHub + overnight summary\n` +
+    `🧠 Nightly: 02:00 AM — consolidation\n` +
+    `📡 Intel: 08:00 AM — curated digest → Social Monitor\n` +
     `${newProjectNote}\n` +
     `Dashboard: http://localhost:${dashPort}/?token=${dashToken}\n` +
     `Say \`/help\` for commands.`

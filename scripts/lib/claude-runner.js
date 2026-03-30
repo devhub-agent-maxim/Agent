@@ -20,10 +20,12 @@
 
 const { spawn } = require('child_process');
 const path      = require('path');
+const { config } = require('./config');
+const usageTracker = require('./usage-tracker');
 
 const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes
 const DEFAULT_CWD        = path.resolve(__dirname, '..', '..');
-const DEFAULT_CMD        = 'C:\\Users\\maxim\\AppData\\Roaming\\npm\\claude.cmd';
+const DEFAULT_CMD        = config.claude.cmd;
 
 // Model tiers
 const MODELS = {
@@ -34,12 +36,32 @@ const MODELS = {
 
 /**
  * Try to parse the last non-empty line of `text` as JSON.
+ * Handles both raw JSON and JSON inside markdown code fences.
  * Returns the parsed object, or null if it is not valid JSON.
  *
  * @param {string} text
  * @returns {object|null}
  */
 function extractStructured(text) {
+  if (!text || text.length === 0) return null;
+
+  // First, try to extract JSON from markdown code fence (```json ... ```)
+  const codeFenceMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/);
+  if (codeFenceMatch) {
+    try {
+      return JSON.parse(codeFenceMatch[1].trim());
+    } catch {}
+  }
+
+  // Second, try to find JSON anywhere in the text (for cases where JSON is not in a code fence)
+  const jsonMatch = text.match(/(\{[\s\S]*"action"\s*:\s*"(?:work|wait)"[\s\S]*?\})/);
+  if (jsonMatch) {
+    try {
+      return JSON.parse(jsonMatch[1].trim());
+    } catch {}
+  }
+
+  // Third, fall back to parsing the last non-empty line
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   if (lines.length === 0) return null;
   const last = lines[lines.length - 1];
@@ -72,6 +94,10 @@ function runClaude(prompt, opts = {}) {
   // Resolve model: accept shorthand ('sonnet', 'opus', 'haiku') or full name
   const modelKey   = opts.model ?? 'sonnet';
   const modelName  = MODELS[modelKey] ?? modelKey; // fallback: treat as full model name
+
+  // Track every Claude call — logs to memory/usage-log.jsonl + pings Telegram
+  const promptSummary = prompt.replace(/\n/g, ' ').trim().slice(0, 80);
+  usageTracker.trackCall(promptSummary, modelKey, prompt.length);
 
   return new Promise((resolve) => {
     let stdout   = '';

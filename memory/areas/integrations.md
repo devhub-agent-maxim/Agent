@@ -21,8 +21,6 @@ For each integration, list:
 | GitHub | ❌ not configured | — | deploy-agent |
 | Vercel | ❌ not configured | — | deploy-agent |
 | Telegram | ❌ not configured | — | all agents |
-| Linear | ❌ not configured | — | jira-sync-agent |
-| Jira | ❌ not configured | — | jira-sync-agent |
 
 ---
 
@@ -59,28 +57,3 @@ For each integration, list:
   2. Get your chat ID: message @userinfobot
 - **Used by**: all agents (notifications)
 - **Notes**: All agents skip gracefully if not configured.
-
----
-
-## Linear
-
-- **Status**: ❌ not configured
-- **Required env vars**:
-  - `LINEAR_API_KEY` — Linear personal API key
-- **How to obtain**: https://linear.app/settings/api → Create personal API key
-- **Used by**: jira-sync-agent.js
-- **Notes**: Takes priority over Jira when both are configured.
-
----
-
-## Jira
-
-- **Status**: ❌ not configured
-- **Required env vars**:
-  - `JIRA_BASE_URL` — e.g. `https://yourorg.atlassian.net`
-  - `JIRA_USER_EMAIL` — Your Atlassian account email
-  - `JIRA_API_TOKEN` — API token (not your password)
-  - `JIRA_PROJECT_KEY` — e.g. `DEV`
-- **How to obtain**: https://id.atlassian.com/manage-profile/security/api-tokens
-- **Used by**: jira-sync-agent.js
-- **Notes**: Used only if LINEAR_API_KEY is not set.

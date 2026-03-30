@@ -46,6 +46,7 @@ const SUPPORTED_PATTERNS = [
   /tiktok\.com\/@?[\w.]+\/video\/\d+/i,
   /tiktok\.com\/t\/\w+/i,
   /vm\.tiktok\.com\/\w+/i,
+  /vt\.tiktok\.com\/\w+/i,          // short share links (e.g. vt.tiktok.com/ZSHJmao5G)
   /instagram\.com\/(p|reel|reels)\/[\w-]+/i,
   /youtube\.com\/shorts\/[\w-]+/i,
   /youtu\.be\/[\w-]+/i,
@@ -78,7 +79,7 @@ function getCaptionsViaYtDlp(url, outputDir) {
   try {
     // Try to get auto-generated subtitles (fastest path, no video download)
     execSync(
-      `"${ytDlp}" --skip-download --write-auto-subs --sub-format vtt --sub-langs en --no-playlist -o "${outTemplate}" "${url}"`,
+      `"${ytDlp}" --impersonate chrome --skip-download --write-auto-subs --sub-format vtt --sub-langs en --no-playlist -o "${outTemplate}" "${url}"`,
       { timeout: 30000, stdio: 'pipe', encoding: 'utf8' }
     );
 
@@ -120,39 +121,89 @@ function parseVtt(vtt) {
 
 // ── Step 2: Extract audio → Whisper transcription ────────────────────────────
 
+function findPython() {
+  // Derive Python from yt-dlp location — they share the same Python install.
+  // yt-dlp.exe lives in <PythonHome>\Scripts\, python.exe in <PythonHome>\
+  const ytDlp = findYtDlp();
+  if (ytDlp && ytDlp.includes('Scripts')) {
+    const pyHome = path.dirname(path.dirname(ytDlp));
+    const pyExe  = path.join(pyHome, 'python.exe');
+    if (fs.existsSync(pyExe)) return pyExe;
+  }
+  // Fallback: explicit known paths
+  const candidates = [
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'python.exe'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'python.exe'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python310', 'python.exe'),
+  ];
+  for (const c of candidates) { if (fs.existsSync(c)) return c; }
+  return 'python';
+}
+
 function getTranscriptViaAudio(url, outputDir) {
   const ytDlp = findYtDlp();
   if (!ytDlp) throw new Error('yt-dlp not installed. Run: pip install yt-dlp');
 
-  const audioFile = path.join(outputDir, 'audio.mp3');
+  // Download video with audio — TikTok's default "best" picks video-only HEVC; force h264+aac
+  // h264_540p is small (~4-8 MB) and always has audio. Fallback: best format that has audio.
+  const audioTemplate = path.join(outputDir, 'audio.%(ext)s');
+  log('Downloading audio (h264+aac)...');
+  const ffmpegDir2 = findFfmpegDir();
+  const extraEnv2  = ffmpegDir2
+    ? { ...process.env, PATH: ffmpegDir2 + path.delimiter + (process.env.PATH || '') }
+    : process.env;
 
-  log('Downloading audio...');
   execSync(
-    `"${ytDlp}" --extract-audio --audio-format mp3 --audio-quality 5 --no-playlist -o "${audioFile}" "${url}"`,
-    { timeout: 60000, stdio: 'pipe', encoding: 'utf8' }
+    `"${ytDlp}" --impersonate chrome --no-playlist --format "best[vcodec=h264]/best[acodec!=none]" -o "${audioTemplate}" "${url}"`,
+    { timeout: 90000, stdio: 'pipe', encoding: 'utf8', env: extraEnv2 }
   );
 
-  if (!fs.existsSync(audioFile)) {
-    // yt-dlp may have added extension twice
-    const files = fs.readdirSync(outputDir).filter(f => f.endsWith('.mp3'));
-    if (files.length === 0) throw new Error('Audio download failed');
+  // Find the downloaded audio file
+  const videoFile = fs.readdirSync(outputDir).find(f =>
+    f.startsWith('audio.') && !f.endsWith('.part')
+  );
+  if (!videoFile) throw new Error('Audio download failed — no file found');
+
+  // Use forward slashes — Python and ffmpeg on Windows both accept them, no escaping needed
+  const videoPath = path.join(outputDir, videoFile).replace(/\\/g, '/');
+  const txtPath   = path.join(outputDir, 'transcript.txt').replace(/\\/g, '/');
+  const python    = findPython();
+
+  log(`Transcribing with Whisper (python: ${path.basename(python)})...`);
+
+  // Find ffmpeg — may not be on PATH in Windows CMD (start-agent.bat environment)
+  const ffmpegDir = findFfmpegDir();
+
+  // Use Whisper Python API directly — CLI entry point is unreliable on Windows.
+  // Inject ffmpeg dir into PATH first so Whisper's subprocess.run(['ffmpeg',...]) finds it.
+  // Use string concat (not template literal) to avoid backslash escaping issues.
+  const pyScript = [
+    'import os, sys',
+    // Prepend ffmpeg directory to PATH so Whisper can call ffmpeg regardless of shell env
+    ffmpegDir
+      ? "os.environ['PATH'] = '" + ffmpegDir.replace(/\\/g, '/') + "' + os.pathsep + os.environ.get('PATH', '')"
+      : '# ffmpeg dir not found — relying on system PATH',
+    'import whisper',
+    "model = whisper.load_model('base')",
+    "result = model.transcribe('" + videoPath + "', language='en', fp16=False)",
+    "with open('" + txtPath + "', 'w', encoding='utf-8') as f:",
+    "    f.write(result['text'])",
+    "print('OK:', len(result['text']))",
+  ].join('\n');
+
+  const result = spawnSync(python, ['-c', pyScript], {
+    timeout:  180000,
+    encoding: 'utf8',
+    env:      { ...process.env },
+  });
+
+  if (result.status !== 0 || result.error) {
+    const errMsg = (result.stderr || result.error?.message || 'unknown error').slice(0, 300);
+    throw new Error(`Whisper failed: ${errMsg}`);
   }
 
-  const actualAudio = fs.readdirSync(outputDir).find(f => f.endsWith('.mp3'));
-  if (!actualAudio) throw new Error('No mp3 found after download');
-
-  log('Transcribing with Whisper...');
-  const result = spawnSync('python3', ['-m', 'whisper', path.join(outputDir, actualAudio),
-    '--model', 'base', '--output_format', 'txt', '--output_dir', outputDir,
-    '--language', 'en', '--fp16', 'False',
-  ], { timeout: 120000, encoding: 'utf8' });
-
-  if (result.status !== 0) throw new Error(`Whisper failed: ${result.stderr?.slice(0, 200)}`);
-
-  const txtFile = fs.readdirSync(outputDir).find(f => f.endsWith('.txt'));
-  if (!txtFile) throw new Error('Whisper produced no text file');
-
-  return fs.readFileSync(path.join(outputDir, txtFile), 'utf8').trim();
+  if (!fs.existsSync(txtPath)) throw new Error('Whisper produced no transcript file');
+  return fs.readFileSync(txtPath, 'utf8').trim();
 }
 
 // ── Find yt-dlp executable ────────────────────────────────────────────────────
@@ -174,6 +225,32 @@ function findYtDlp() {
       return cmd;
     } catch {}
   }
+  return null;
+}
+
+// ── Find ffmpeg directory ─────────────────────────────────────────────────────
+// ffmpeg may be on PATH in bash but not in Windows CMD (start-agent.bat).
+// Return its directory so the Python Whisper script can prepend it to PATH.
+
+function findFfmpegDir() {
+  const knownPaths = [
+    // Standard Windows install location found on this machine
+    'C:\\ffmpeg\\ffmpeg-master-latest-win64-gpl-shared\\bin',
+    'C:\\ffmpeg\\bin',
+    'C:\\Program Files\\ffmpeg\\bin',
+    path.join(os.homedir(), 'ffmpeg', 'bin'),
+  ];
+
+  for (const dir of knownPaths) {
+    if (fs.existsSync(path.join(dir, 'ffmpeg.exe'))) return dir;
+  }
+
+  // Try to find via PATH
+  try {
+    const which = execSync('where ffmpeg', { stdio: 'pipe', timeout: 3000, encoding: 'utf8' }).trim();
+    if (which) return path.dirname(which.split('\n')[0].trim());
+  } catch {}
+
   return null;
 }
 
