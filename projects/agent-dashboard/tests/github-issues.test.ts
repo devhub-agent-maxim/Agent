@@ -10,6 +10,166 @@ describe('GitHub Issues Integration', () => {
     jest.clearAllMocks();
   });
 
+  describe('Security - Command Injection Prevention', () => {
+    describe('getGitHubIssuesKanban validation', () => {
+      it('should reject owner with command injection attempt', async () => {
+        await expect(
+          getGitHubIssuesKanban('owner; rm -rf /', 'repo')
+        ).rejects.toThrow('Invalid owner');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject repo with command injection attempt', async () => {
+        await expect(
+          getGitHubIssuesKanban('owner', 'repo && malicious-command')
+        ).rejects.toThrow('Invalid repo');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject owner with backticks', async () => {
+        await expect(
+          getGitHubIssuesKanban('owner`whoami`', 'repo')
+        ).rejects.toThrow('Invalid owner');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject repo with pipe operator', async () => {
+        await expect(
+          getGitHubIssuesKanban('owner', 'repo | cat /etc/passwd')
+        ).rejects.toThrow('Invalid repo');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject owner with dollar sign (variable expansion)', async () => {
+        await expect(
+          getGitHubIssuesKanban('owner$HOME', 'repo')
+        ).rejects.toThrow('Invalid owner');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject empty owner', async () => {
+        await expect(
+          getGitHubIssuesKanban('', 'repo')
+        ).rejects.toThrow('Invalid owner');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject empty repo', async () => {
+        await expect(
+          getGitHubIssuesKanban('owner', '')
+        ).rejects.toThrow('Invalid repo');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject owner starting with period', async () => {
+        await expect(
+          getGitHubIssuesKanban('.hidden', 'repo')
+        ).rejects.toThrow('Invalid owner');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject owner with special characters', async () => {
+        await expect(
+          getGitHubIssuesKanban('owner@test', 'repo')
+        ).rejects.toThrow('Invalid owner');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject overly long owner (>39 chars)', async () => {
+        const longOwner = 'a'.repeat(40);
+        await expect(
+          getGitHubIssuesKanban(longOwner, 'repo')
+        ).rejects.toThrow('exceeds maximum length');
+
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should accept valid owner and repo names', async () => {
+        mockedExecSync
+          .mockReturnValueOnce(JSON.stringify([]))
+          .mockReturnValueOnce(JSON.stringify([]));
+
+        await expect(
+          getGitHubIssuesKanban('valid-owner_123', 'valid.repo-name')
+        ).resolves.toBeDefined();
+
+        expect(mockedExecSync).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    describe('getGitHubRepoInfo validation', () => {
+      it('should reject path with directory traversal (..)', () => {
+        const result = getGitHubRepoInfo('/path/../../../etc/passwd');
+
+        expect(result).toBeNull();
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject path with tilde expansion', () => {
+        const result = getGitHubRepoInfo('~/malicious/path');
+
+        expect(result).toBeNull();
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject path with command injection', () => {
+        const result = getGitHubRepoInfo('/path; rm -rf /');
+
+        expect(result).toBeNull();
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject path with pipe operator', () => {
+        const result = getGitHubRepoInfo('/path | cat /etc/passwd');
+
+        expect(result).toBeNull();
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject path with backticks', () => {
+        const result = getGitHubRepoInfo('/path`whoami`');
+
+        expect(result).toBeNull();
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject path with dollar sign', () => {
+        const result = getGitHubRepoInfo('/path/$HOME');
+
+        expect(result).toBeNull();
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should reject empty path', () => {
+        const result = getGitHubRepoInfo('');
+
+        expect(result).toBeNull();
+        expect(mockedExecSync).not.toHaveBeenCalled();
+      });
+
+      it('should accept valid absolute path', () => {
+        mockedExecSync.mockReturnValue('https://github.com/owner/repo.git\n');
+
+        const result = getGitHubRepoInfo('/valid/absolute/path');
+
+        expect(result).toEqual({ owner: 'owner', repo: 'repo' });
+        expect(mockedExecSync).toHaveBeenCalledWith(
+          'git remote get-url origin',
+          expect.objectContaining({ cwd: '/valid/absolute/path' })
+        );
+      });
+    });
+  });
+
   describe('getGitHubRepoInfo', () => {
     it('should parse HTTPS GitHub URL correctly', () => {
       mockedExecSync.mockReturnValue('https://github.com/owner/repo.git\n');
