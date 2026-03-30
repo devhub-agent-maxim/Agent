@@ -335,6 +335,27 @@ describe('validate - main workflow', () => {
     expect(gitOps.getDiff).not.toHaveBeenCalled();
   });
 
+  test('skips validation when only memory/log files changed', async () => {
+    gitOps.getStatus.mockReturnValue([
+      { file: 'memory/daily/2026-03-30.md', status: 'M' },
+      { file: 'memory/usage-log.jsonl', status: 'M' },
+    ]);
+
+    const result = await validator.validate('ISSUE-23', 'Verified security fix');
+
+    expect(result).toEqual({
+      committed: false,
+      sha: null,
+      score: null,
+      suggestions: [],
+      issueUrl: null,
+    });
+    expect(gitOps.getDiff).not.toHaveBeenCalled();
+    expect(memory.log).toHaveBeenCalledWith(
+      'Worker ISSUE-23 changes skipped: only memory/log updates, no code changes'
+    );
+  });
+
   test('runs tests when changes detected in project directory', async () => {
     gitOps.getStatus.mockReturnValue([
       { file: 'projects/agent-tools/src/index.ts', status: 'M' },

@@ -279,6 +279,19 @@ async function validate(workerId, workerOutput, notifyFns = {}) {
 
   log(`${changedFiles.length} file(s) changed: ${changedFiles.map(f => f.file).join(', ')}`);
 
+  // Skip validation if ONLY memory/log files changed (no actual code changes)
+  const onlyMemoryFiles = changedFiles.every(f =>
+    f.file.startsWith('memory/') ||
+    f.file.includes('usage-log.jsonl') ||
+    f.file.includes('.log')
+  );
+
+  if (onlyMemoryFiles) {
+    log('Only memory/log files changed — skipping validation (no code changes to review)');
+    memory.log(`Worker ${workerId} changes skipped: only memory/log updates, no code changes`);
+    return { committed: false, sha: null, score: null, suggestions: [], issueUrl: null };
+  }
+
   // Step 1: Get diff for review
   const diff = gitOps.getDiff();
 
