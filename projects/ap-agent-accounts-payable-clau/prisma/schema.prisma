@@ -1,0 +1,213 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Multi-tenant core
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id          String   @id @default(cuid())
+  clerkOrgId  String   @unique @map("clerk_org_id") // Clerk organization ID — tenancy boundary
+  name        String
+  slug        String   @unique
+  plan        String   @default("retainer_500") // retainer_500 | custom
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  invoices      Invoice[]
+  purchaseOrders PurchaseOrder[]
+  vendors       Vendor[]
+  approvalRules ApprovalRule[]
+  glCodes       GlCode[]
+  auditLogs     AuditLog[]
+
+  @@map("tenants")
+}
+
+// ---------------------------------------------------------------------------
+// Vendors
+// ---------------------------------------------------------------------------
+
+model Vendor {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  name       String
+  code       String   // internal vendor code
+  email      String?
+  taxId      String?  @map("tax_id")
+  address    Json?    // { street, city, state, zip, country }
+  paymentTerms Int    @default(30) @map("payment_terms") // net days
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  invoices       Invoice[]
+  purchaseOrders PurchaseOrder[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("vendors")
+}
+
+// ---------------------------------------------------------------------------
+// GL Codes (Chart of Accounts subset)
+// ---------------------------------------------------------------------------
+
+model GlCode {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  code        String   // e.g. "5010"
+  description String
+  category    String   // expense | asset | liability
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  lineItems LineItem[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("gl_codes")
+}
+
+// ---------------------------------------------------------------------------
+// Purchase Orders
+// ---------------------------------------------------------------------------
+
+model PurchaseOrder {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  vendorId    String   @map("vendor_id")
+  poNumber    String   @map("po_number")
+  status      String   @default("open") // open | partially_matched | closed | cancelled
+  totalAmount Decimal  @map("total_amount") @db.Decimal(12, 2)
+  currency    String   @default("USD")
+  issuedAt    DateTime @default(now()) @map("issued_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  vendor   Vendor    @relation(fields: [vendorId], references: [id])
+  invoices Invoice[]
+
+  @@unique([tenantId, poNumber])
+  @@index([tenantId])
+  @@index([tenantId, vendorId])
+  @@map("purchase_orders")
+}
+
+// ---------------------------------------------------------------------------
+// Invoices
+// ---------------------------------------------------------------------------
+
+model Invoice {
+  id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  vendorId        String   @map("vendor_id")
+  purchaseOrderId String?  @map("purchase_order_id")
+  invoiceNumber   String   @map("invoice_number")
+  status          String   @default("pending") // pending | approved | rejected | paid | void
+  totalAmount     Decimal  @map("total_amount") @db.Decimal(12, 2)
+  taxAmount       Decimal  @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  currency        String   @default("USD")
+  dueDate         DateTime @map("due_date")
+  receivedAt      DateTime @default(now()) @map("received_at")
+  approvedAt      DateTime? @map("approved_at")
+  approvedBy      String?  @map("approved_by")
+  paidAt          DateTime? @map("paid_at")
+  notes           String?
+  ocrConfidence   Float?   @map("ocr_confidence") // AI extraction confidence 0-1
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  vendor        Vendor         @relation(fields: [vendorId], references: [id])
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  lineItems     LineItem[]
+
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, vendorId])
+  @@index([tenantId, dueDate])
+  @@map("invoices")
+}
+
+// ---------------------------------------------------------------------------
+// Line Items
+// ---------------------------------------------------------------------------
+
+model LineItem {
+  id          String  @id @default(cuid())
+  tenantId    String  @map("tenant_id")
+  invoiceId   String  @map("invoice_id")
+  glCodeId    String? @map("gl_code_id")
+  description String
+  quantity    Decimal @default(1) @db.Decimal(10, 4)
+  unitPrice   Decimal @map("unit_price") @db.Decimal(12, 2)
+  amount      Decimal @db.Decimal(12, 2) // quantity * unitPrice
+  sortOrder   Int     @default(0) @map("sort_order")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  glCode  GlCode? @relation(fields: [glCodeId], references: [id])
+
+  @@index([tenantId])
+  @@index([invoiceId])
+  @@map("line_items")
+}
+
+// ---------------------------------------------------------------------------
+// Approval Rules
+// ---------------------------------------------------------------------------
+
+model ApprovalRule {
+  id            String  @id @default(cuid())
+  tenantId      String  @map("tenant_id")
+  name          String
+  description   String?
+  minAmount     Decimal @map("min_amount") @db.Decimal(12, 2) // threshold
+  maxAmount     Decimal? @map("max_amount") @db.Decimal(12, 2)
+  approverEmail String  @map("approver_email")
+  approverRole  String  @map("approver_role") // ap_clerk | manager | cfo
+  autoApprove   Boolean @default(false) @map("auto_approve")
+  priority      Int     @default(0) // lower = higher priority
+  active        Boolean @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, active])
+  @@map("approval_rules")
+}
+
+// ---------------------------------------------------------------------------
+// Audit Log (append-only)
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  entityType String   @map("entity_type") // invoice | vendor | po | approval_rule
+  entityId   String   @map("entity_id")
+  action     String   // created | updated | approved | rejected | paid | deleted
+  actorId    String?  @map("actor_id")
+  actorEmail String?  @map("actor_email")
+  changes    Json?    // { field: { old, new } }
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, createdAt])
+  @@map("audit_log")
+}
