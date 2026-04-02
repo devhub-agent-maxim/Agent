@@ -21,12 +21,22 @@ model Tenant {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  invoices      Invoice[]
-  purchaseOrders PurchaseOrder[]
-  vendors       Vendor[]
-  approvalRules ApprovalRule[]
-  glCodes       GlCode[]
-  auditLogs     AuditLog[]
+  // Notification preferences — { emails: string[], onApproval: bool, onException: bool, dailySummary: bool }
+  notificationSettings Json? @map("notification_settings")
+
+  // QuickBooks Online OAuth — tokens stored AES-256-GCM encrypted
+  qboRealmId      String?   @map("qbo_realm_id")
+  qboAccessToken  String?   @map("qbo_access_token")   // encrypted
+  qboRefreshToken String?   @map("qbo_refresh_token")  // encrypted
+  qboTokenExpiry  DateTime? @map("qbo_token_expiry")
+
+  invoices         Invoice[]
+  purchaseOrders   PurchaseOrder[]
+  vendors          Vendor[]
+  approvalRules    ApprovalRule[]
+  approvalRequests ApprovalRequest[]
+  glCodes          GlCode[]
+  auditLogs        AuditLog[]
 
   @@map("tenants")
 }
@@ -125,13 +135,16 @@ model Invoice {
   paidAt          DateTime? @map("paid_at")
   notes           String?
   ocrConfidence   Float?   @map("ocr_confidence") // AI extraction confidence 0-1
+  qboSyncedAt     DateTime? @map("qbo_synced_at")
+  qboBillId       String?   @map("qbo_bill_id")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id])
-  vendor        Vendor         @relation(fields: [vendorId], references: [id])
-  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
-  lineItems     LineItem[]
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  vendor           Vendor            @relation(fields: [vendorId], references: [id])
+  purchaseOrder    PurchaseOrder?    @relation(fields: [purchaseOrderId], references: [id])
+  lineItems        LineItem[]
+  approvalRequests ApprovalRequest[]
 
   @@unique([tenantId, invoiceNumber])
   @@index([tenantId])
@@ -210,4 +223,32 @@ model AuditLog {
   @@index([tenantId, entityType, entityId])
   @@index([tenantId, createdAt])
   @@map("audit_log")
+}
+
+// ---------------------------------------------------------------------------
+// Approval Requests (created by approval-router when routing invoices)
+// ---------------------------------------------------------------------------
+
+model ApprovalRequest {
+  id            String    @id @default(cuid())
+  tenantId      String    @map("tenant_id")
+  invoiceId     String    @map("invoice_id")
+  ruleId        String?   @map("rule_id") // null = auto-approval or no rule matched
+  approverEmail String    @map("approver_email")
+  approverRole  String    @map("approver_role") // ap_clerk | manager | cfo
+  status        String    @default("pending") // pending | approved | rejected
+  notifiedAt    DateTime? @map("notified_at")
+  resolvedAt    DateTime? @map("resolved_at")
+  resolvedBy    String?   @map("resolved_by")
+  notes         String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, invoiceId])
+  @@index([tenantId, status])
+  @@map("approval_requests")
 }

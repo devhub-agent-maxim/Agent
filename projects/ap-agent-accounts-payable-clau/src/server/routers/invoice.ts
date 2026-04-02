@@ -1,6 +1,9 @@
 import { z } from "zod";
-import { router, tenantProcedure } from "../trpc";
+import { router, tenantProcedure, approverProcedure, adminProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+import { matchPo } from "../services/po-matcher";
+import { routeApproval } from "../services/approval-router";
+import { syncBillToQbo } from "../services/qbo-sync";
 
 // ---------------------------------------------------------------------------
 // Shared schemas
@@ -114,7 +117,7 @@ export const invoiceRouter = router({
     return invoice;
   }),
 
-  action: tenantProcedure.input(invoiceActionInput).mutation(async ({ ctx, input }) => {
+  action: approverProcedure.input(invoiceActionInput).mutation(async ({ ctx, input }) => {
     const statusMap: Record<string, string> = {
       approve: "approved",
       reject: "rejected",
@@ -160,4 +163,129 @@ export const invoiceRouter = router({
 
     return updated;
   }),
+
+  // ---------------------------------------------------------------------------
+  // matchPo — fuzzy-match the invoice's extracted PO number against open POs
+  // ---------------------------------------------------------------------------
+
+  matchPo: tenantProcedure
+    .input(
+      z.object({
+        invoiceId: z.string(),
+        extractedPoNumber: z.string().optional(),
+        invoiceAmount: z.number().nonnegative(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const invoice = await ctx.prisma.invoice.findFirst({
+        where: { id: input.invoiceId, tenantId: ctx.tenantId },
+      });
+      if (!invoice) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+      }
+
+      const match = await matchPo(
+        ctx.tenantId,
+        input.extractedPoNumber,
+        input.invoiceAmount,
+        ctx.prisma
+      );
+
+      if (match) {
+        // Link the PO and record the confidence score
+        await ctx.prisma.invoice.update({
+          where: { id: input.invoiceId },
+          data: {
+            purchaseOrderId: match.poId,
+            ocrConfidence: match.confidence,
+          },
+        });
+
+        await ctx.prisma.auditLog.create({
+          data: {
+            tenantId: ctx.tenantId,
+            entityType: "invoice",
+            entityId: input.invoiceId,
+            action: "po_matched",
+            actorId: ctx.userId,
+            actorEmail: ctx.userEmail,
+            changes: {
+              poId: match.poId,
+              poNumber: match.poNumber,
+              confidence: match.confidence,
+              autoApproved: match.autoApproved,
+            },
+          },
+        });
+      }
+
+      return { match };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // routeApproval — evaluate approval rules, create requests, notify approvers
+  // ---------------------------------------------------------------------------
+
+  routeApproval: tenantProcedure
+    .input(
+      z.object({
+        invoiceId: z.string(),
+        invoiceAmount: z.number().nonnegative(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const invoice = await ctx.prisma.invoice.findFirst({
+        where: { id: input.invoiceId, tenantId: ctx.tenantId },
+      });
+      if (!invoice) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+      }
+
+      const result = await routeApproval(
+        ctx.tenantId,
+        input.invoiceId,
+        input.invoiceAmount,
+        ctx.userId,
+        ctx.userEmail,
+        ctx.prisma
+      );
+
+      return result;
+    }),
+
+  // ---------------------------------------------------------------------------
+  // syncToQbo — push an approved invoice to QuickBooks Online as a Bill
+  // ---------------------------------------------------------------------------
+
+  syncToQbo: adminProcedure
+    .input(z.object({ invoiceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const invoice = await ctx.prisma.invoice.findFirst({
+        where: { id: input.invoiceId, tenantId: ctx.tenantId },
+      });
+      if (!invoice) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+      }
+      if (invoice.status !== "approved") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Invoice must be approved before syncing to QBO (current status: ${invoice.status})`,
+        });
+      }
+
+      try {
+        const result = await syncBillToQbo(
+          ctx.tenantId,
+          input.invoiceId,
+          ctx.prisma
+        );
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `QBO sync failed: ${message}`,
+        });
+      }
+    }),
 });

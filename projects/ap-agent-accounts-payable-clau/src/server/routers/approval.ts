@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, tenantProcedure } from "../trpc";
+import { router, tenantProcedure, adminProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
 
 const ruleCreateInput = z.object({
@@ -53,7 +53,7 @@ export const approvalRouter = router({
       return rules;
     }),
 
-  create: tenantProcedure.input(ruleCreateInput).mutation(async ({ ctx, input }) => {
+  create: adminProcedure.input(ruleCreateInput).mutation(async ({ ctx, input }) => {
     const rule = await ctx.prisma.$transaction(async (tx) => {
       const r = await tx.approvalRule.create({
         data: { tenantId: ctx.tenantId, ...input },
@@ -74,7 +74,7 @@ export const approvalRouter = router({
     return rule;
   }),
 
-  update: tenantProcedure.input(ruleUpdateInput).mutation(async ({ ctx, input }) => {
+  update: adminProcedure.input(ruleUpdateInput).mutation(async ({ ctx, input }) => {
     const { id, ...data } = input;
     const existing = await ctx.prisma.approvalRule.findFirst({
       where: { id, tenantId: ctx.tenantId },
@@ -99,7 +99,7 @@ export const approvalRouter = router({
     return rule;
   }),
 
-  delete: tenantProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
+  delete: adminProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
     const existing = await ctx.prisma.approvalRule.findFirst({
       where: { id: input.id, tenantId: ctx.tenantId },
     });

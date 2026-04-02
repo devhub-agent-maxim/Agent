@@ -1,6 +1,13 @@
 import { z } from "zod";
-import { router, tenantProcedure, publicProcedure } from "../trpc";
+import { router, tenantProcedure, publicProcedure, adminProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
+
+const notificationSettingsSchema = z.object({
+  emails: z.array(z.string().email()).default([]),
+  onApproval: z.boolean().default(true),
+  onException: z.boolean().default(true),
+  dailySummary: z.boolean().default(false),
+});
 
 /**
  * Tenant router — handles onboarding and tenant config.
@@ -47,5 +54,58 @@ export const tenantRouter = router({
     });
     if (!tenant) throw new TRPCError({ code: "NOT_FOUND", message: "Tenant not found" });
     return tenant;
+  }),
+
+  /** QBO connection status — whether OAuth tokens exist and are not expired */
+  qboStatus: tenantProcedure.query(async ({ ctx }) => {
+    const tenant = await ctx.prisma.tenant.findUnique({
+      where: { id: ctx.tenantId },
+      select: { qboRealmId: true, qboTokenExpiry: true },
+    });
+    if (!tenant) throw new TRPCError({ code: "NOT_FOUND", message: "Tenant not found" });
+
+    const connected = !!tenant.qboRealmId;
+    const expired = tenant.qboTokenExpiry ? tenant.qboTokenExpiry < new Date() : true;
+    return { connected, expired, realmId: tenant.qboRealmId };
+  }),
+
+  /** Notification preferences for this tenant */
+  getNotificationSettings: tenantProcedure.query(async ({ ctx }) => {
+    const tenant = await ctx.prisma.tenant.findUnique({
+      where: { id: ctx.tenantId },
+      select: { notificationSettings: true },
+    });
+    if (!tenant) throw new TRPCError({ code: "NOT_FOUND", message: "Tenant not found" });
+
+    const defaults = { emails: [], onApproval: true, onException: true, dailySummary: false };
+    if (!tenant.notificationSettings) return defaults;
+
+    // Parse stored JSON safely
+    const parsed = notificationSettingsSchema.safeParse(tenant.notificationSettings);
+    return parsed.success ? parsed.data : defaults;
+  }),
+
+  updateNotificationSettings: adminProcedure
+    .input(notificationSettingsSchema)
+    .mutation(async ({ ctx, input }) => {
+      await ctx.prisma.tenant.update({
+        where: { id: ctx.tenantId },
+        data: { notificationSettings: input },
+      });
+      return { success: true };
+    }),
+
+  /** Disconnect QBO by clearing OAuth tokens. Existing synced bills are unaffected. */
+  qboDisconnect: adminProcedure.mutation(async ({ ctx }) => {
+    await ctx.prisma.tenant.update({
+      where: { id: ctx.tenantId },
+      data: {
+        qboRealmId: null,
+        qboAccessToken: null,
+        qboRefreshToken: null,
+        qboTokenExpiry: null,
+      },
+    });
+    return { success: true };
   }),
 });
