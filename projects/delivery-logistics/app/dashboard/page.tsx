@@ -9,6 +9,27 @@ import { saveRoute } from '../../src/lib/route-storage';
 
 type Step = 'input' | 'loading' | 'results';
 
+const DEMO_ADDRESSES = [
+  'Block 123 Jurong East Street 13, Singapore 600123',
+  'Block 456 Tampines Street 42, Singapore 520456',
+  'Block 789 Woodlands Drive 14, Singapore 730789',
+  'Block 234 Clementi Avenue 3, Singapore 120234',
+  'Block 567 Bedok North Street 3, Singapore 460567',
+  'Block 890 Ang Mo Kio Avenue 10, Singapore 560890',
+  'Block 111 Toa Payoh Lorong 1, Singapore 310111',
+  'Block 333 Bishan Street 13, Singapore 570333',
+  'Block 555 Punggol Central, Singapore 820555',
+  'Block 777 Pasir Ris Street 71, Singapore 510777',
+  'Block 222 Bukit Batok West Avenue 6, Singapore 650222',
+  'Block 444 Yishun Ring Road, Singapore 760444',
+  'Block 666 Hougang Avenue 4, Singapore 530666',
+  'Block 888 Sengkang East Way, Singapore 540888',
+  'Block 100 Queenstown Road, Singapore 160100',
+];
+
+const DEMO_DRIVER_NAMES = ['Ahmad', 'Wei Ming', 'Ravi'];
+const DEMO_DEPOT = 'Block 1 Toa Payoh Industrial Park, Singapore 319384';
+
 // The optimize API returns either a multi-driver plan or a single mock route.
 // We normalize both into DriverRoute[] so the UI is consistent.
 interface ApiRouteShape {
@@ -133,6 +154,13 @@ export default function DashboardPage() {
     setIsMockData(false);
   }
 
+  function handleLoadDemo() {
+    setAddresses(DEMO_ADDRESSES);
+    setDriverCount(3);
+    setDriverNames(DEMO_DRIVER_NAMES);
+    setDepotAddress(DEMO_DEPOT);
+  }
+
   return (
     <div className="min-h-screen bg-[#0f172a] text-white">
       {/* Header */}
@@ -184,11 +212,22 @@ export default function DashboardPage() {
         ) : (
           /* ---- INPUT VIEW ---- */
           <div className="space-y-6">
-            <div>
-              <h1 className="text-2xl font-bold">Plan today&apos;s routes</h1>
-              <p className="text-slate-400 text-sm mt-1">
-                Add delivery addresses, set your drivers, and get optimized routes in seconds.
-              </p>
+            <div className="flex items-start justify-between flex-wrap gap-3">
+              <div>
+                <h1 className="text-2xl font-bold">Plan today&apos;s routes</h1>
+                <p className="text-slate-400 text-sm mt-1">
+                  Add delivery addresses, set your drivers, and get optimized routes in seconds.
+                </p>
+              </div>
+              {addresses.length === 0 && (
+                <button
+                  type="button"
+                  onClick={handleLoadDemo}
+                  className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 hover:bg-blue-600/30 transition-colors"
+                >
+                  🚀 Load demo (15 SG addresses)
+                </button>
+              )}
             </div>
 
             {error && (
