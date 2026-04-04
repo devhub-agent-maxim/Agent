@@ -96,3 +96,16 @@
 - [ ] No TypeScript errors (tsc --noEmit passes)
 - [ ] Build succeeds (next build passes)
 **Dependencies:** Milestone 6, Milestone 7
+
+### Milestone 9: Real Road Routing (OSRM)
+**Goal:** Replace straight-line haversine distances with actual Singapore road network data using OSRM (Open Source Routing Machine). This gives real drive times, proper clustering by actual proximity on roads, and accurate ETAs — no API key needed.
+**Files:** src/lib/osrm-client.ts, src/routes/optimizer.ts, app/api/routes/optimize/route.ts
+**Acceptance criteria:**
+- [ ] OSRM client calls `router.project-osrm.org` Table service to get real drive-time matrix for all stops
+- [ ] Distance matrix uses actual road seconds/metres (not haversine straight-line)
+- [ ] k-means clustering uses real drive-time distances so geographically close-on-roads stops go to same driver
+- [ ] Nearest-neighbour route optimizer uses real road distances
+- [ ] Falls back to haversine if OSRM API is unavailable (timeout 3s)
+- [ ] 150-stop matrix fetch completes under 5 seconds
+- [ ] ETA shown per driver uses real drive time
+**Dependencies:** Milestone 2, Milestone 5

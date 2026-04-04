@@ -15,5 +15,7 @@
 | 7. Auth + Persistence | COMPLETE | Login/signup, Supabase save, history page |
 | 8. Polish + Launch | COMPLETE | Viewport meta, SSR fix, 150-stop stress test <1s |
 
-### Completed: 8 / 8 milestones ✅
-### Remaining: 0 — ALL MILESTONES COMPLETE
+| 9. Real Road Routing (OSRM) | PENDING | Replace haversine with real SG road data |
+
+### Completed: 8 / 9 milestones
+### Remaining: 1 milestone (9)
