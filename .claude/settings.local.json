@@ -30,29 +30,12 @@
       "Bash(\"C:\\\\Users\\\\maxim\\\\AppData\\\\Roaming\\\\npm\\\\claude.cmd\" --help)",
       "Bash(where bun:*)",
       "Bash(where node:*)",
-      "Bash(ls \"C:\\\\Users\\\\maxim\\\\OneDrive\\\\Desktop\\\\test claude\\\\scripts\"\" 2>&1 || mkdir \"C:UsersmaximOneDriveDesktoptest claudescripts \")",
       "Bash(timeout 15 node scripts/telegram-bridge.js)",
-      "Bash(curl -s \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/getMe\")",
       "Bash(timeout 12 node scripts/telegram-bridge.js)",
       "Bash(timeout 8 node scripts/telegram-bridge.js)",
-      "Bash(start \"Dev Ecosystem Hub Bridge\" /min cmd /k \"cd /d \"\"C:\\\\Users\\\\maxim\\\\OneDrive\\\\Desktop\\\\test claude\"\" && node scripts\\\\telegram-bridge.js\")",
-      "Bash(curl -s -X POST \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/sendMessage\" -H \"Content-Type: application/json\" -d '{\"\"chat_id\"\": -1003615225859, \"\"text\"\": \"\"/status\"\"}')",
-      "Bash(curl -s -X POST \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/sendMessage\" -H \"Content-Type: application/json\" -d '{:*)",
-      "Bash(python3 -c \":*)",
-      "Bash(curl -s \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/getUpdates?limit=5\")",
-      "Bash(curl -s \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/getUpdates?limit=10&timeout=1&offset=0\")",
-      "Bash(python3 -m json.tool)",
-      "Bash(curl -s \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/getUpdates?limit=1&timeout=1&offset=-1\")",
-      "Bash(kill 562 564 642 643)",
-      "Bash(curl -s \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/sendMessage\" -d \"chat_id=-1003615225859&text=test+ping+from+api\")",
-      "Bash(curl -s \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/getChatMember?chat_id=-1003615225859&user_id=8488379003\")",
-      "Bash(kill 1602 1604)",
-      "Bash(curl -s \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/getUpdates?limit=10&timeout=1\")",
-      "Bash(curl -s \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/getUpdates?limit=5&timeout=3&offset=-1\")",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2\\)\\)\")",
-      "Bash(curl -s \"https://api.telegram.org/bot8488379003:AAHAfDgqLEE2vCQPoL57yyX9rcZdVaOC5ew/getWebhookInfo\")",
-      "Bash(python3 -c \"import sys,json; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)\\)\")"
-    ]
+      "Bash(node -e \"require\\(''./scripts/lib/config''\\); console.log\\(''token_len='' + \\(process.env.GITHUB_TOKEN||process.env.GH_TOKEN||''''\\).length\\)\")"
+    ],
+    "defaultMode": "bypassPermissions"
   },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [

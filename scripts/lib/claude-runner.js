@@ -27,7 +27,7 @@ const DEFAULT_CMD        = 'C:\\Users\\maxim\\AppData\\Roaming\\npm\\claude.cmd'
 
 // Model tiers
 const MODELS = {
-  sonnet: 'claude-sonnet-4-5',   // default — fast, cheap, capable
+  sonnet: 'claude-sonnet-4-6',   // default — fast, cheap, capable
   opus:   'claude-opus-4-6',     // complex reasoning and architecture decisions only
   haiku:  'claude-haiku-4-5-20251001', // routing and trivial transforms
 };
