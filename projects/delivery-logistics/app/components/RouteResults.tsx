@@ -229,9 +229,10 @@ export default function RouteResults({ routes, planId, driverNames }: RouteResul
           </div>
         </div>
 
-        {/* Map — markers coloured to match this driver's colour scheme */}
+        {/* Leaflet map — shows all stops with coloured markers + route line */}
         <RouteMap
           addresses={activeRoute.stops.map((s) => s.address)}
+          coordinates={activeRoute.stops.map((s) => s.coordinates ?? null)}
           driverIndex={activeTab}
         />
 
