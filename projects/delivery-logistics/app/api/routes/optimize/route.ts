@@ -22,14 +22,25 @@ function validateBody(body: unknown): body is OptimizeRequestBody {
   return true;
 }
 
+// Singapore bounding box for realistic mock coordinates
+const SG_LAT_MIN = 1.22, SG_LAT_MAX = 1.46;
+const SG_LNG_MIN = 103.62, SG_LNG_MAX = 104.00;
+
+/** Deterministic pseudo-random float in [min, max] seeded by index */
+function mockCoord(min: number, max: number, seed: number): number {
+  // Simple LCG so coordinates are spread but reproducible
+  const x = ((seed * 1664525 + 1013904223) & 0x7fffffff) / 0x7fffffff;
+  return min + x * (max - min);
+}
+
 function buildMockPlan(addresses: string[], driverCount: number): MultiDriverPlan {
   const stops: DeliveryStop[] = addresses.map((address, i) => ({
     id: uuidv4(),
     address,
     label: `Stop ${i + 1}`,
     coordinates: {
-      lat: 1.3521 + (i * 0.008),
-      lng: 103.8198 + (i * 0.005),
+      lat: mockCoord(SG_LAT_MIN, SG_LAT_MAX, i * 2),
+      lng: mockCoord(SG_LNG_MIN, SG_LNG_MAX, i * 2 + 1),
     },
   }));
 

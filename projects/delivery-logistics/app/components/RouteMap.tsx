@@ -73,17 +73,22 @@ export default function RouteMap({ addresses, driverIndex = 0 }: RouteMapProps) 
 
   return (
     <div className="space-y-1">
-      <div className="w-full h-48 rounded-lg overflow-hidden border border-slate-700">
+      <div className="w-full h-48 rounded-lg overflow-hidden border border-slate-700 relative">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={src}
           alt="Route map"
           className="w-full h-full object-cover"
           onError={(e) => {
+            // Replace with a helpful error that tells the user exactly what to fix
             const target = e.currentTarget.parentElement;
             if (target) {
-              target.innerHTML =
-                '<div class="w-full h-full flex items-center justify-center text-slate-500 text-sm bg-slate-800">Map failed to load — check your API key.</div>';
+              target.innerHTML = `
+                <div class="w-full h-full flex flex-col items-center justify-center gap-2 bg-slate-800 px-4 text-center">
+                  <p class="text-slate-300 text-sm font-medium">Map failed to load</p>
+                  <p class="text-slate-500 text-xs">Enable <strong class="text-slate-400">Maps Static API</strong> in Google Cloud Console for your API key, then redeploy.</p>
+                  <a href="https://console.cloud.google.com/apis/library/static-maps-backend.googleapis.com" target="_blank" rel="noopener noreferrer" class="text-xs text-blue-400 underline mt-1">Open Google Cloud Console →</a>
+                </div>`;
             }
           }}
         />
