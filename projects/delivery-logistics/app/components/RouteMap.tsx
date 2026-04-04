@@ -2,6 +2,8 @@
 
 interface RouteMapProps {
   addresses?: string[];
+  /** Driver index (0-based) used to colour markers. Defaults to 0 (blue). */
+  driverIndex?: number;
 }
 
 // Singapore bounding box center
@@ -9,7 +11,32 @@ const SG_LAT = 1.3521;
 const SG_LNG = 103.8198;
 const SG_ZOOM = 12;
 
-export default function RouteMap({ addresses }: RouteMapProps) {
+// Maps driverIndex → Google Static Maps marker colour name.
+// Static Maps supports: black brown green purple yellow blue gray orange red white
+const DRIVER_MAP_COLORS = [
+  'blue',
+  'green',
+  'orange',
+  'purple',
+  'red',
+  'blue',
+  'yellow',
+  'red',
+  'green',
+  'purple',
+] as const;
+
+// Max stops to show on the static map (keeps URL under ~4 kB)
+const MAX_MAP_STOPS = 50;
+
+// Label characters: 1-9 then A-Z (single char required by Static Maps API)
+const LABEL_CHARS = '123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+function getLabel(i: number): string {
+  return LABEL_CHARS[i] ?? 'Z';
+}
+
+export default function RouteMap({ addresses, driverIndex = 0 }: RouteMapProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
 
   if (!apiKey) {
@@ -28,35 +55,44 @@ export default function RouteMap({ addresses }: RouteMapProps) {
           Set <code className="bg-slate-700 px-1 rounded">NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to
           enable the map.
         </p>
-        <p className="text-xs text-slate-600">Use "Open in Google Maps" to navigate.</p>
+        <p className="text-xs text-slate-600">Use &quot;Open in Google Maps&quot; to navigate.</p>
       </div>
     );
   }
 
-  // Build static maps URL with markers for each address (up to 10 for readability)
-  const displayed = addresses?.slice(0, 10) ?? [];
+  const color = DRIVER_MAP_COLORS[driverIndex % DRIVER_MAP_COLORS.length];
+  const displayed = addresses?.slice(0, MAX_MAP_STOPS) ?? [];
+  const truncated = (addresses?.length ?? 0) > MAX_MAP_STOPS;
+
   const markers = displayed
-    .map((addr, i) => `markers=label:${i + 1}|${encodeURIComponent(addr)}`)
+    .map((addr, i) => `markers=color:${color}|label:${getLabel(i)}|${encodeURIComponent(addr)}`)
     .join('&');
 
   const center = `${SG_LAT},${SG_LNG}`;
   const src = `https://maps.googleapis.com/maps/api/staticmap?center=${center}&zoom=${SG_ZOOM}&size=600x200&maptype=roadmap&${markers}&key=${apiKey}`;
 
   return (
-    <div className="w-full h-48 rounded-lg overflow-hidden border border-slate-700">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={src}
-        alt="Route map"
-        className="w-full h-full object-cover"
-        onError={(e) => {
-          const target = e.currentTarget.parentElement;
-          if (target) {
-            target.innerHTML =
-              '<div class="w-full h-full flex items-center justify-center text-slate-500 text-sm bg-slate-800">Map failed to load</div>';
-          }
-        }}
-      />
+    <div className="space-y-1">
+      <div className="w-full h-48 rounded-lg overflow-hidden border border-slate-700">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt="Route map"
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            const target = e.currentTarget.parentElement;
+            if (target) {
+              target.innerHTML =
+                '<div class="w-full h-full flex items-center justify-center text-slate-500 text-sm bg-slate-800">Map failed to load — check your API key.</div>';
+            }
+          }}
+        />
+      </div>
+      {truncated && (
+        <p className="text-xs text-slate-500 text-right">
+          Showing first {MAX_MAP_STOPS} of {addresses?.length} stops on map.
+        </p>
+      )}
     </div>
   );
 }

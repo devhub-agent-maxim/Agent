@@ -228,8 +228,11 @@ export default function RouteResults({ routes, planId, driverNames }: RouteResul
           </div>
         </div>
 
-        {/* Map placeholder */}
-        <RouteMap addresses={activeRoute.stops.map((s) => s.address)} />
+        {/* Map — markers coloured to match this driver's colour scheme */}
+        <RouteMap
+          addresses={activeRoute.stops.map((s) => s.address)}
+          driverIndex={activeTab}
+        />
 
         {/* Stop list */}
         {activeRoute.stops.length === 0 ? (
