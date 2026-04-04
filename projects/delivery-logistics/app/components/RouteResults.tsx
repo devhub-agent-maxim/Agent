@@ -126,7 +126,8 @@ export default function RouteResults({ routes, planId, driverNames }: RouteResul
   const activeRoute = routes[activeTab];
   const color = DRIVER_COLORS[activeTab % DRIVER_COLORS.length];
   const driverName = driverNames[activeTab] || activeRoute.driverName;
-  const driverLink = `${window.location.origin}/driver/${planId}?driver=${activeTab}`;
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const driverLink = `${origin}/driver/${planId}?driver=${activeTab}`;
   const mapsUrls = buildGoogleMapsUrls(activeRoute.stops);
 
   return (
