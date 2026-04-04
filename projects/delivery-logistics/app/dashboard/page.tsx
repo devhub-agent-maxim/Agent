@@ -42,15 +42,31 @@ interface ApiRouteShape {
 interface ApiResponse {
   mock?: boolean;
   message?: string;
-  // Multi-driver shape (future)
+  // Wrapped plan shape (returned by optimize API)
+  plan?: {
+    routes: DriverRoute[];
+    totalStops: number;
+    totalDrivers: number;
+    totalDistanceMeters: number;
+    totalDurationSeconds: number;
+  };
+  // Multi-driver shape (flat)
   routes?: DriverRoute[];
-  // Single-route shape (current mock)
+  // Single-route shape
   route?: ApiRouteShape;
   error?: string;
 }
 
 function normalizeToDriverRoutes(data: ApiResponse, driverCount: number, names: string[]): DriverRoute[] {
-  // Multi-driver shape
+  // Wrapped plan shape (from optimize API)
+  if (data.plan?.routes && data.plan.routes.length > 0) {
+    return data.plan.routes.map((r, i) => ({
+      ...r,
+      driverName: names[i] || r.driverName,
+    }));
+  }
+
+  // Multi-driver shape (flat)
   if (data.routes && data.routes.length > 0) {
     return data.routes.map((r, i) => ({
       ...r,
