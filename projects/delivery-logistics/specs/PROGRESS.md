@@ -11,9 +11,9 @@
 | 3. Dashboard UI | COMPLETE | Address input, driver config, results display |
 | 4. Driver Mobile View | COMPLETE | Shareable driver links with mobile layout |
 | 5. API + Dashboard Integration | COMPLETE | REST endpoints connected, plan wrapper bug fixed |
-| 6. Google Maps Integration | PENDING | Next up — map display + waypoint splitting |
-| 7. Auth + Persistence | PENDING | Supabase auth + route saving |
-| 8. Polish + Launch | PENDING | Error handling, loading states, stress test |
+| 6. Google Maps Integration | COMPLETE | Coloured markers, 25+ split nav, API-key fallback |
+| 7. Auth + Persistence | COMPLETE | Login/signup, Supabase save, history page |
+| 8. Polish + Launch | COMPLETE | Viewport meta, SSR fix, 150-stop stress test <1s |
 
-### Completed: 5 / 8 milestones
-### Remaining: 3 milestones (6, 7, 8)
+### Completed: 8 / 8 milestones ✅
+### Remaining: 0 — ALL MILESTONES COMPLETE
