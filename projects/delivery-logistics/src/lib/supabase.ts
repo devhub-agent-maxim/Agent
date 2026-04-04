@@ -1,12 +1,19 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
-  );
+/**
+ * Returns a configured Supabase client, or null when environment variables are
+ * not set. All callers must guard: `const sb = createSupabaseClient(); if (!sb) return;`
+ */
+export function createSupabaseClient(): SupabaseClient | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key);
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+/**
+ * Module-level singleton — may be null when env vars are absent.
+ * Prefer calling `createSupabaseClient()` in components/actions so the
+ * null check is explicit at the call site.
+ */
+export const supabase = createSupabaseClient();

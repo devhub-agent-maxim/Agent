@@ -1,11 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import type { User } from '@supabase/supabase-js';
 import AddressInput from '../components/AddressInput';
 import DriverSettings from '../components/DriverSettings';
 import RouteResults from '../components/RouteResults';
 import type { DriverRoute, MultiDriverPlan } from '../../src/routes/multi-driver';
-import { saveRoute } from '../../src/lib/route-storage';
+import { saveRoute, getRoute } from '../../src/lib/route-storage';
+import { createSupabaseClient } from '../../src/lib/supabase';
 
 type Step = 'input' | 'loading' | 'results';
 
@@ -30,8 +34,6 @@ const DEMO_ADDRESSES = [
 const DEMO_DRIVER_NAMES = ['Ahmad', 'Wei Ming', 'Ravi'];
 const DEMO_DEPOT = 'Block 1 Toa Payoh Industrial Park, Singapore 319384';
 
-// The optimize API returns either a multi-driver plan or a single mock route.
-// We normalize both into DriverRoute[] so the UI is consistent.
 interface ApiRouteShape {
   stops: DriverRoute['stops'];
   segments: DriverRoute['segments'];
@@ -42,7 +44,6 @@ interface ApiRouteShape {
 interface ApiResponse {
   mock?: boolean;
   message?: string;
-  // Wrapped plan shape (returned by optimize API)
   plan?: {
     routes: DriverRoute[];
     totalStops: number;
@@ -50,40 +51,23 @@ interface ApiResponse {
     totalDistanceMeters: number;
     totalDurationSeconds: number;
   };
-  // Multi-driver shape (flat)
   routes?: DriverRoute[];
-  // Single-route shape
   route?: ApiRouteShape;
   error?: string;
 }
 
 function normalizeToDriverRoutes(data: ApiResponse, driverCount: number, names: string[]): DriverRoute[] {
-  // Wrapped plan shape (from optimize API)
   if (data.plan?.routes && data.plan.routes.length > 0) {
-    return data.plan.routes.map((r, i) => ({
-      ...r,
-      driverName: names[i] || r.driverName,
-    }));
+    return data.plan.routes.map((r, i) => ({ ...r, driverName: names[i] || r.driverName }));
   }
-
-  // Multi-driver shape (flat)
   if (data.routes && data.routes.length > 0) {
-    return data.routes.map((r, i) => ({
-      ...r,
-      driverName: names[i] || r.driverName,
-    }));
+    return data.routes.map((r, i) => ({ ...r, driverName: names[i] || r.driverName }));
   }
-
-  // Single-route shape — distribute stops round-robin across drivers
   if (data.route) {
     const allStops = data.route.stops;
     const effective = Math.min(driverCount, Math.max(1, allStops.length));
     const buckets: DriverRoute['stops'][] = Array.from({ length: effective }, () => []);
-
-    allStops.forEach((stop, i) => {
-      buckets[i % effective].push(stop);
-    });
-
+    allStops.forEach((stop, i) => { buckets[i % effective].push(stop); });
     return buckets.map((stops, i) => {
       const perStopDist = allStops.length > 0 ? data.route!.totalDistanceMeters / allStops.length : 0;
       const perStopDur = allStops.length > 0 ? data.route!.totalDurationSeconds / allStops.length : 0;
@@ -97,11 +81,26 @@ function normalizeToDriverRoutes(data: ApiResponse, driverCount: number, names: 
       };
     });
   }
-
   return [];
 }
 
-export default function DashboardPage() {
+async function saveRouteToSupabase(plan: MultiDriverPlan, userId: string): Promise<void> {
+  const supabase = createSupabaseClient();
+  if (!supabase) return;
+
+  await supabase.from('routes').insert({
+    user_id: userId,
+    plan_data: plan,
+    total_stops: plan.totalStops,
+    total_drivers: plan.totalDrivers,
+    name: null,
+  });
+}
+
+function DashboardContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [step, setStep] = useState<Step>('input');
   const [addresses, setAddresses] = useState<string[]>([]);
   const [driverCount, setDriverCount] = useState(3);
@@ -111,6 +110,43 @@ export default function DashboardPage() {
   const [planId, setPlanId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isMockData, setIsMockData] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  // Check auth state on mount
+  useEffect(() => {
+    const supabase = createSupabaseClient();
+    if (!supabase) return;
+
+    supabase.auth.getUser().then(({ data: { user: u } }) => {
+      setUser(u);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => { subscription.unsubscribe(); };
+  }, []);
+
+  // Load a plan from localStorage if ?loadPlan=<id> is present
+  useEffect(() => {
+    const loadPlanId = searchParams.get('loadPlan');
+    if (!loadPlanId) return;
+
+    const plan = getRoute(loadPlanId);
+    if (!plan) return;
+
+    setPlanId(loadPlanId);
+    setRoutes(plan.routes);
+    setAddresses(plan.routes.flatMap((r) => r.stops.map((s) => s.address)));
+    setDriverCount(plan.totalDrivers);
+    setDriverNames(plan.routes.map((r) => r.driverName));
+    setStep('results');
+
+    // Clean up query param without triggering a full navigation
+    router.replace('/dashboard', { scroll: false });
+  }, [searchParams, router]);
 
   const canOptimize = addresses.length >= 1;
 
@@ -118,6 +154,7 @@ export default function DashboardPage() {
     if (!canOptimize) return;
     setStep('loading');
     setError(null);
+    setSaveStatus('idle');
 
     try {
       const res = await fetch('/api/routes/optimize', {
@@ -142,7 +179,6 @@ export default function DashboardPage() {
         throw new Error('No routes returned from the server.');
       }
 
-      // Build a MultiDriverPlan to persist in localStorage
       const plan: MultiDriverPlan = {
         routes: normalizedRoutes,
         totalStops: addresses.length,
@@ -156,11 +192,36 @@ export default function DashboardPage() {
       setRoutes(normalizedRoutes);
       setIsMockData(!!data.mock);
       setStep('results');
+
+      // Also persist to Supabase if user is authenticated
+      if (user) {
+        setSaveStatus('saving');
+        try {
+          await saveRouteToSupabase(plan, user.id);
+          setSaveStatus('saved');
+        } catch {
+          setSaveStatus('error');
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
       setStep('input');
     }
   }
+
+  const handleSaveManually = useCallback(async () => {
+    if (!user || step !== 'results') return;
+    const plan = getRoute(planId);
+    if (!plan) return;
+
+    setSaveStatus('saving');
+    try {
+      await saveRouteToSupabase(plan, user.id);
+      setSaveStatus('saved');
+    } catch {
+      setSaveStatus('error');
+    }
+  }, [user, step, planId]);
 
   function handleReset() {
     setStep('input');
@@ -168,6 +229,7 @@ export default function DashboardPage() {
     setPlanId('');
     setError(null);
     setIsMockData(false);
+    setSaveStatus('idle');
   }
 
   function handleLoadDemo() {
@@ -175,6 +237,12 @@ export default function DashboardPage() {
     setDriverCount(3);
     setDriverNames(DEMO_DRIVER_NAMES);
     setDepotAddress(DEMO_DEPOT);
+  }
+
+  async function handleSignOut() {
+    const supabase = createSupabaseClient();
+    if (supabase) await supabase.auth.signOut();
+    setUser(null);
   }
 
   return (
@@ -190,9 +258,42 @@ export default function DashboardPage() {
             </div>
             <span className="text-lg font-bold tracking-tight">RouteFlow</span>
           </div>
-          <span className="text-xs text-slate-500 hidden sm:block">
-            Singapore delivery route optimization
-          </span>
+
+          {/* Auth controls */}
+          <div className="flex items-center gap-3">
+            {user ? (
+              <>
+                <Link
+                  href="/dashboard/history"
+                  className="text-sm text-slate-400 hover:text-white transition-colors hidden sm:block"
+                >
+                  Route history
+                </Link>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="text-sm text-slate-400 hover:text-white transition-colors"
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/auth/login"
+                  className="text-sm text-slate-400 hover:text-white transition-colors"
+                >
+                  Sign in
+                </Link>
+                <Link
+                  href="/auth/signup"
+                  className="px-3 py-1.5 text-sm font-medium rounded-lg bg-green-600/20 border border-green-500/30 text-green-400 hover:bg-green-600/30 transition-colors"
+                >
+                  Sign up
+                </Link>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -207,12 +308,38 @@ export default function DashboardPage() {
                   {addresses.length} stops across {routes.length} driver{routes.length !== 1 ? 's' : ''}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2 items-center">
                 {isMockData && (
                   <span className="self-center px-2.5 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs font-medium">
                     Demo data — set API key for real routes
                   </span>
                 )}
+
+                {/* Save to Supabase button (only when logged in and not auto-saved) */}
+                {user && saveStatus !== 'saved' && (
+                  <button
+                    type="button"
+                    onClick={handleSaveManually}
+                    disabled={saveStatus === 'saving'}
+                    className="px-4 py-2 text-sm font-medium rounded-lg bg-green-600/20 border border-green-500/30 text-green-400 hover:bg-green-600/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'error' ? 'Retry save' : 'Save route'}
+                  </button>
+                )}
+                {user && saveStatus === 'saved' && (
+                  <span className="self-center px-2.5 py-1 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-medium">
+                    Saved to history
+                  </span>
+                )}
+                {!user && (
+                  <Link
+                    href="/auth/login"
+                    className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-600 text-slate-400 hover:border-slate-500 hover:text-white transition-colors"
+                  >
+                    Sign in to save
+                  </Link>
+                )}
+
                 <button
                   type="button"
                   onClick={handleReset}
@@ -241,7 +368,7 @@ export default function DashboardPage() {
                   onClick={handleLoadDemo}
                   className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 hover:bg-blue-600/30 transition-colors"
                 >
-                  🚀 Load demo (15 SG addresses)
+                  Load demo (15 SG addresses)
                 </button>
               )}
             </div>
@@ -256,12 +383,9 @@ export default function DashboardPage() {
             )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Left: Address input */}
               <div className="bg-slate-900 rounded-xl border border-slate-800 p-5">
                 <AddressInput addresses={addresses} onChange={setAddresses} />
               </div>
-
-              {/* Right: Driver settings */}
               <div className="bg-slate-900 rounded-xl border border-slate-800 p-5">
                 <DriverSettings
                   driverCount={driverCount}
@@ -274,7 +398,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Action button */}
             <div className="flex flex-col items-center gap-3">
               <button
                 type="button"
@@ -302,10 +425,30 @@ export default function DashboardPage() {
               {!canOptimize && (
                 <p className="text-xs text-slate-500">Add at least 1 delivery address to continue.</p>
               )}
+              {!user && (
+                <p className="text-xs text-slate-500">
+                  <Link href="/auth/login" className="text-slate-400 hover:text-white underline">Sign in</Link> to save routes to your history.
+                </p>
+              )}
             </div>
           </div>
         )}
       </main>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
+        <svg className="w-8 h-8 animate-spin text-green-400" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+        </svg>
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }
