@@ -1,33 +1,21 @@
-# Project: Google Maps Delivery Logistics Tool
+# RouteFlow — v1 BUILT — awaiting deploy secrets
 
 ## Status
-- **Phase**: Foundation (Phase 1 in progress)
-- **Goal**: Automate delivery route planning using Google Maps API
-- **Location**: `projects/delivery-logistics/`
+Build: CLEAN (Next.js 15, 5 routes, 26 tests passing)
+Deploy: Needs GitHub Secrets + Vercel project setup
 
-## Architecture
-- TypeScript CLI tool
-- Google Maps Directions + Distance Matrix + Geocoding APIs
-- Nearest-neighbor route optimization algorithm
-- Domain structure: `src/maps/`, `src/routes/`, `src/cli/`
+## To Go Live
+1. Create Vercel project → root: projects/delivery-logistics
+2. Add GitHub Secrets to devhub-agent-maxim/Agent:
+   - GOOGLE_MAPS_API_KEY (Google Cloud Console)
+   - VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+   - TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+3. Push to main → auto-deploys
 
-## Key Decisions
-- Nearest-neighbor for MVP route optimization (fast, good enough for small sets)
-- Mocked Maps API in tests (avoid API cost in CI)
-- dotenv for API key management — never hardcode
-
-## Environment
-- Requires `GOOGLE_MAPS_API_KEY` in `.env`
-- See `config/.env.example` for all required vars
-
-## Tasks
-- Full task list: `memory/projects/delivery-logistics/TASKS.md`
-- Phases 1–4 complete as of 2026-03-28 (12/12 tests pass, build clean)
-- Next: Phase 5 — end-to-end test with real Google Maps API key
-
-## Phase Progress
-- [x] Phase 1 — Project Foundation (package.json, tsconfig.json, jest.config.js, deps installed)
-- [x] Phase 2 — Google Maps Integration (client.ts, geocoder.ts, types.ts — 4 tests passing)
-- [x] Phase 3 — Route Engine (optimizer.ts, planner.ts — 6 tests passing)
-- [x] Phase 4 — CLI Interface (index.ts, reporter.ts — 2 tests passing)
-- [ ] Phase 5 — Integration & Polish (end-to-end with real API key)
+## What's Built
+- Multi-driver route optimization (k-means geographic clustering)
+- Dispatcher dashboard (address input, driver settings, color-coded route results)
+- Driver mobile view (big Navigate button → Google Maps, tap-to-check stops)
+- API: POST /api/routes/optimize (mock when no API key, real when key set)
+- GitHub Actions deploy pipeline (.github/workflows/deploy.yml)
+- Telegram notification script (scripts/notify-telegram.sh)
