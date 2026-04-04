@@ -23,15 +23,32 @@ const DRIVER_COLORS = [
   { bg: 'bg-indigo-500/10', border: 'border-indigo-500/30', badge: 'bg-indigo-500', text: 'text-indigo-400' },
 ];
 
-function buildGoogleMapsUrl(stops: DriverRoute['stops']): string {
-  if (stops.length === 0) return 'https://maps.google.com';
-  const addresses = stops.map((s) => encodeURIComponent(s.address));
-  if (addresses.length === 1) {
-    return `https://www.google.com/maps/search/?api=1&query=${addresses[0]}`;
+function buildGoogleMapsUrls(stops: DriverRoute['stops']): string[] {
+  if (stops.length === 0) return ['https://maps.google.com'];
+  const addresses = stops.map((s) => s.address);
+
+  const MAX_POINTS = 25;
+  if (addresses.length <= MAX_POINTS) {
+    return [buildChunkUrl(addresses)];
   }
-  const origin = addresses[0];
-  const dest = addresses[addresses.length - 1];
-  const waypoints = addresses.slice(1, -1).join('|');
+
+  const urls: string[] = [];
+  let start = 0;
+  while (start < addresses.length - 1) {
+    const end = Math.min(start + MAX_POINTS, addresses.length);
+    urls.push(buildChunkUrl(addresses.slice(start, end)));
+    start = end - 1;
+  }
+  return urls;
+}
+
+function buildChunkUrl(addresses: string[]): string {
+  if (addresses.length === 1) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addresses[0])}`;
+  }
+  const origin = encodeURIComponent(addresses[0]);
+  const dest = encodeURIComponent(addresses[addresses.length - 1]);
+  const waypoints = addresses.slice(1, -1).map(encodeURIComponent).join('|');
   let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}`;
   if (waypoints) url += `&waypoints=${waypoints}`;
   url += '&travelmode=driving';
@@ -110,7 +127,7 @@ export default function RouteResults({ routes, planId, driverNames }: RouteResul
   const color = DRIVER_COLORS[activeTab % DRIVER_COLORS.length];
   const driverName = driverNames[activeTab] || activeRoute.driverName;
   const driverLink = `${window.location.origin}/driver/${planId}?driver=${activeTab}`;
-  const mapsUrl = buildGoogleMapsUrl(activeRoute.stops);
+  const mapsUrls = buildGoogleMapsUrls(activeRoute.stops);
 
   return (
     <div className="space-y-4">
@@ -173,18 +190,40 @@ export default function RouteResults({ routes, planId, driverNames }: RouteResul
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <a
-              href={mapsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              Open in Maps
-            </a>
+            {mapsUrls.length === 1 ? (
+              <a
+                href={mapsUrls[0]}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Open in Maps
+              </a>
+            ) : (
+              mapsUrls.map((url, partIdx) => {
+                const partStart = partIdx * 24 + 1;
+                const partEnd = Math.min(partStart + 24, activeRoute.stops.length);
+                return (
+                  <a
+                    key={partIdx}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    Navigate Part {partIdx + 1} (stops {partStart}-{partEnd})
+                  </a>
+                );
+              })
+            )}
             <CopyButton text={driverLink} label="Copy driver link" />
           </div>
         </div>

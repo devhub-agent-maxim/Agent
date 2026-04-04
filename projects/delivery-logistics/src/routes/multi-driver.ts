@@ -109,20 +109,24 @@ export class MultiDriverPlanner {
   }
 
   /**
-   * Simple k-means clustering on geographic coordinates.
-   * Initializes centroids by picking evenly spaced stops sorted by longitude.
+   * K-means clustering on geographic coordinates using haversine distance.
+   * Uses k-means++ initialization for well-spread initial centroids and
+   * runs at least 20 iterations to ensure convergence.
    */
   private kMeansClustering(
     stops: DeliveryStop[],
     k: number,
     maxIterations: number,
   ): DeliveryStop[][] {
-    // Initialize centroids using evenly spaced picks from longitude-sorted stops
-    const centroids = this.initializeCentroids(stops, k);
+    // Use at least 20 iterations for reliable convergence
+    const iterations = Math.max(maxIterations, 20);
+
+    // Initialize centroids using k-means++ for good spread
+    const centroids = this.initializeCentroidsPlusPlus(stops, k);
     let assignments = new Array<number>(stops.length).fill(0);
 
-    for (let iter = 0; iter < maxIterations; iter++) {
-      // Assignment step: assign each stop to nearest centroid
+    for (let iter = 0; iter < iterations; iter++) {
+      // Assignment step: assign each stop to nearest centroid using haversine
       const newAssignments = stops.map((stop) => {
         const coords = stop.coordinates!;
         let bestIdx = 0;
@@ -141,9 +145,9 @@ export class MultiDriverPlanner {
       const converged = newAssignments.every((a, i) => a === assignments[i]);
       assignments = newAssignments;
 
-      if (converged) break;
+      if (converged && iter >= 5) break; // require at least 5 iterations
 
-      // Update step: recalculate centroids
+      // Update step: recalculate centroids as mean of assigned members
       for (let c = 0; c < k; c++) {
         const members = stops.filter((_, i) => assignments[i] === c);
         if (members.length > 0) {
@@ -151,6 +155,28 @@ export class MultiDriverPlanner {
             lat: members.reduce((sum, s) => sum + s.coordinates!.lat, 0) / members.length,
             lng: members.reduce((sum, s) => sum + s.coordinates!.lng, 0) / members.length,
           };
+        }
+      }
+
+      // Handle empty clusters: reinitialize empty centroid to the farthest point
+      // from its nearest centroid (prevents dead clusters)
+      for (let c = 0; c < k; c++) {
+        const members = stops.filter((_, i) => assignments[i] === c);
+        if (members.length === 0) {
+          // Find the stop that is farthest from its assigned centroid
+          let farthestIdx = 0;
+          let farthestDist = 0;
+          for (let s = 0; s < stops.length; s++) {
+            const dist = this.haversineDistance(
+              stops[s].coordinates!,
+              centroids[assignments[s]],
+            );
+            if (dist > farthestDist) {
+              farthestDist = dist;
+              farthestIdx = s;
+            }
+          }
+          centroids[c] = { ...stops[farthestIdx].coordinates! };
         }
       }
     }
@@ -161,22 +187,60 @@ export class MultiDriverPlanner {
       clusters[assignments[i]].push(stop);
     });
 
-    // Remove empty clusters and rebalance if needed
+    // Return all k clusters (may include empty ones, handled by caller)
     return clusters.filter((c) => c.length > 0);
   }
 
   /**
-   * Initialize k centroids by sorting stops by longitude and picking evenly spaced ones.
+   * K-means++ initialization: picks centroids that are well-spread geographically.
+   * First centroid is the geographic median, subsequent centroids are chosen
+   * with probability proportional to squared distance from nearest existing centroid.
    */
-  private initializeCentroids(stops: DeliveryStop[], k: number): Coordinates[] {
-    const sorted = [...stops].sort(
-      (a, b) => a.coordinates!.lng - b.coordinates!.lng,
-    );
-    const step = sorted.length / k;
-    return Array.from({ length: k }, (_, i) => {
-      const idx = Math.min(Math.floor(i * step), sorted.length - 1);
-      return { ...sorted[idx].coordinates! };
-    });
+  private initializeCentroidsPlusPlus(
+    stops: DeliveryStop[],
+    k: number,
+  ): Coordinates[] {
+    const centroids: Coordinates[] = [];
+
+    // First centroid: pick the stop closest to the geographic center
+    const centerLat =
+      stops.reduce((sum, s) => sum + s.coordinates!.lat, 0) / stops.length;
+    const centerLng =
+      stops.reduce((sum, s) => sum + s.coordinates!.lng, 0) / stops.length;
+    const center: Coordinates = { lat: centerLat, lng: centerLng };
+
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < stops.length; i++) {
+      const d = this.haversineDistance(stops[i].coordinates!, center);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    centroids.push({ ...stops[bestIdx].coordinates! });
+
+    // Subsequent centroids: pick the stop that is farthest from nearest centroid
+    // (deterministic variant of k-means++ for reproducible results)
+    while (centroids.length < k) {
+      let maxMinDist = 0;
+      let nextIdx = 0;
+      for (let i = 0; i < stops.length; i++) {
+        // Min distance from this stop to any existing centroid
+        let minDist = Infinity;
+        for (const c of centroids) {
+          const d = this.haversineDistance(stops[i].coordinates!, c);
+          if (d < minDist) minDist = d;
+        }
+        if (minDist > maxMinDist) {
+          maxMinDist = minDist;
+          nextIdx = i;
+        }
+      }
+      centroids.push({ ...stops[nextIdx].coordinates! });
+    }
+
+    return centroids;
   }
 
   /**

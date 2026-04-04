@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { getDriverRoute } from '@/lib/route-storage'
-import { buildGoogleMapsUrl, buildSingleStopUrl } from '@/lib/maps-url'
+import { buildGoogleMapsUrls, buildSingleStopUrl } from '@/lib/maps-url'
 import type { DriverRoute } from '@/routes/multi-driver'
 
 interface ParsedRouteId {
@@ -115,7 +115,7 @@ export default function DriverRoutePage({
 
   const deliveryStops = route.stops.filter((s) => s.id !== '__depot__')
   const allAddresses = deliveryStops.map((s) => s.address)
-  const mapsUrl = buildGoogleMapsUrl(allAddresses)
+  const mapsUrls = buildGoogleMapsUrls(allAddresses)
   const deliveredCount = deliveryStops.filter((s) => checkedStops.has(s.id)).length
   const totalCount = deliveryStops.length
   const progressPercent = totalCount > 0 ? Math.round((deliveredCount / totalCount) * 100) : 0
@@ -161,10 +161,10 @@ export default function DriverRoutePage({
           </div>
         </div>
 
-        {/* Big Navigate All Stops button */}
-        {totalCount > 0 && (
+        {/* Big Navigate button(s) — split into parts if >25 stops */}
+        {totalCount > 0 && mapsUrls.length === 1 && (
           <a
-            href={mapsUrl}
+            href={mapsUrls[0]}
             target="_blank"
             rel="noopener noreferrer"
             className="block w-full bg-green-500 hover:bg-green-600 active:bg-green-700 text-white text-center font-bold text-xl rounded-2xl py-5 shadow-lg transition-colors"
@@ -175,6 +175,29 @@ export default function DriverRoutePage({
               Opens Google Maps with full route
             </span>
           </a>
+        )}
+        {totalCount > 0 && mapsUrls.length > 1 && (
+          <div className="flex flex-col gap-2">
+            {mapsUrls.map((url, partIdx) => {
+              const partStart = partIdx * 24 + 1;
+              const partEnd = Math.min(partStart + 24, totalCount);
+              return (
+                <a
+                  key={partIdx}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full bg-green-500 hover:bg-green-600 active:bg-green-700 text-white text-center font-bold text-lg rounded-2xl py-4 shadow-lg transition-colors"
+                  style={{ minHeight: '60px', lineHeight: '1.2' }}
+                >
+                  Navigate Part {partIdx + 1} (stops {partStart}-{partEnd})
+                  <span className="block text-sm font-normal text-green-100 mt-1">
+                    Opens Google Maps
+                  </span>
+                </a>
+              );
+            })}
+          </div>
         )}
 
         {/* Progress bar */}
