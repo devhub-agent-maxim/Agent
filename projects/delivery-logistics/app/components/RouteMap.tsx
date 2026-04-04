@@ -2,60 +2,67 @@
 
 import dynamic from 'next/dynamic';
 
-// Leaflet requires browser APIs — must be loaded client-side only
 const LeafletMap = dynamic(() => import('./LeafletMap'), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-48 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-500 text-sm">
+    <div className="w-full h-48 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-500 text-sm gap-2">
+      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+      </svg>
       Loading map...
     </div>
   ),
 });
 
-// Hex colours matching the DRIVER_COLORS array in RouteResults
+// Hex colours matching DRIVER_COLORS in RouteResults (index-aligned)
 const DRIVER_HEX_COLORS = [
-  '#3b82f6', // blue-500
-  '#22c55e', // green-500
-  '#f97316', // orange-500
-  '#a855f7', // purple-500
-  '#ec4899', // pink-500
-  '#06b6d4', // cyan-500
-  '#eab308', // yellow-500
-  '#ef4444', // red-500
-  '#14b8a6', // teal-500
-  '#6366f1', // indigo-500
+  '#3b82f6', // blue
+  '#22c55e', // green
+  '#f97316', // orange
+  '#a855f7', // purple
+  '#ec4899', // pink
+  '#06b6d4', // cyan
+  '#eab308', // yellow
+  '#ef4444', // red
+  '#14b8a6', // teal
+  '#6366f1', // indigo
 ];
 
 interface RouteMapProps {
+  /** Stop addresses (used as labels) */
   addresses?: string[];
+  /** Geocoded coordinates — index-aligned with addresses. May contain nulls. */
   coordinates?: Array<{ lat: number; lng: number } | null | undefined>;
+  /** Driver index for colour coding */
   driverIndex?: number;
 }
 
-export default function RouteMap({ addresses, coordinates, driverIndex = 0 }: RouteMapProps) {
+export default function RouteMap({ addresses = [], coordinates = [], driverIndex = 0 }: RouteMapProps) {
   const color = DRIVER_HEX_COLORS[driverIndex % DRIVER_HEX_COLORS.length];
 
-  // Build stop list: use coordinates where available, skip null entries
-  const stops = (coordinates ?? [])
-    .map((c, i) => (c ? { lat: c.lat, lng: c.lng, label: String(i + 1) } : null))
+  // Build stop list from whatever coordinates we have
+  const stops = coordinates
+    .map((c, i) =>
+      c ? { lat: c.lat, lng: c.lng, label: String(i + 1) } : null
+    )
     .filter((s): s is { lat: number; lng: number; label: string } => s !== null);
 
-  if (stops.length === 0) {
-    return (
-      <div className="w-full h-48 rounded-lg bg-slate-800 border border-slate-700 flex flex-col items-center justify-center gap-2 text-slate-500">
-        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-            d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-        </svg>
-        <p className="text-sm font-medium">Map preview</p>
-        <p className="text-xs text-slate-600">
-          {addresses && addresses.length > 0
-            ? 'Route optimized — map visible after geocoding'
-            : 'Add stops to see the route map'}
+  // Show map regardless — if no coordinates yet, map opens on Singapore center
+  // and shows a note. Once coordinates arrive, markers render automatically.
+  return (
+    <div className="space-y-1">
+      <LeafletMap stops={stops} color={color} />
+      {addresses.length > 0 && stops.length === 0 && (
+        <p className="text-xs text-slate-500 text-center">
+          Map shows stops after route is planned with real coordinates.
         </p>
-      </div>
-    );
-  }
-
-  return <LeafletMap stops={stops} color={color} />;
+      )}
+      {stops.length > 0 && stops.length < addresses.length && (
+        <p className="text-xs text-slate-500 text-right">
+          {stops.length} of {addresses.length} stops plotted.
+        </p>
+      )}
+    </div>
+  );
 }

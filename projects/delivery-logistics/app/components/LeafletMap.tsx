@@ -13,16 +13,19 @@ interface LeafletMapProps {
   color: string;
 }
 
+// Singapore center fallback
+const SG_CENTER: [number, number] = [1.3521, 103.8198];
+const SG_ZOOM = 12;
+
 export default function LeafletMap({ stops, color }: LeafletMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<ReturnType<typeof import('leaflet')['map']> | null>(null);
+  const mapRef = useRef<import('leaflet').Map | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current || stops.length === 0) return;
+    if (!containerRef.current) return;
 
-    // Lazy-import leaflet so it only runs in the browser
     import('leaflet').then((L) => {
-      // Fix default marker icon paths broken by webpack
+      // Fix broken default icon paths from webpack bundling
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({
@@ -31,25 +34,34 @@ export default function LeafletMap({ stops, color }: LeafletMapProps) {
         shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
       });
 
-      // Destroy previous map instance to avoid "container already initialized" error
+      // Remove old instance if stops/color changed
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
 
-      const map = L.map(containerRef.current!, { zoomControl: true, attributionControl: false });
+      const map = L.map(containerRef.current!, {
+        zoomControl: true,
+        attributionControl: true,
+        scrollWheelZoom: false, // prevent page scroll hijack on mobile
+      });
       mapRef.current = map;
 
-      // OpenStreetMap tiles — free, no API key
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
+        attribution: '© OpenStreetMap',
       }).addTo(map);
+
+      if (stops.length === 0) {
+        map.setView(SG_CENTER, SG_ZOOM);
+        return;
+      }
 
       // Draw route polyline
       const latLngs = stops.map((s) => L.latLng(s.lat, s.lng));
       L.polyline(latLngs, { color, weight: 3, opacity: 0.8 }).addTo(map);
 
-      // Add numbered markers
+      // Add numbered circle markers
       stops.forEach((stop) => {
         const icon = L.divIcon({
           className: '',
@@ -62,10 +74,11 @@ export default function LeafletMap({ stops, color }: LeafletMapProps) {
             display:flex;
             align-items:center;
             justify-content:center;
-            font-size:10px;
+            font-size:9px;
             font-weight:700;
-            border:2px solid rgba(255,255,255,0.8);
-            box-shadow:0 1px 4px rgba(0,0,0,0.4);
+            border:2px solid rgba(255,255,255,0.85);
+            box-shadow:0 1px 4px rgba(0,0,0,0.45);
+            box-sizing:border-box;
           ">${stop.label}</div>`,
           iconSize: [22, 22],
           iconAnchor: [11, 11],
@@ -73,8 +86,8 @@ export default function LeafletMap({ stops, color }: LeafletMapProps) {
         L.marker([stop.lat, stop.lng], { icon }).addTo(map);
       });
 
-      // Fit map to show all markers
-      map.fitBounds(L.latLngBounds(latLngs), { padding: [16, 16] });
+      // Fit all markers into view with padding
+      map.fitBounds(L.latLngBounds(latLngs), { padding: [20, 20], maxZoom: 14 });
     });
 
     return () => {
@@ -83,23 +96,15 @@ export default function LeafletMap({ stops, color }: LeafletMapProps) {
         mapRef.current = null;
       }
     };
-    // Re-render when stops or color changes
+    // Stringify to detect actual data changes, not just reference changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(stops), color]);
 
   return (
-    <>
-      {/* Leaflet CSS */}
-      {/* eslint-disable-next-line @next/next/no-sync-scripts */}
-      <link
-        rel="stylesheet"
-        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      />
-      <div
-        ref={containerRef}
-        className="w-full h-48 rounded-lg overflow-hidden border border-slate-700"
-        style={{ minHeight: '192px' }}
-      />
-    </>
+    <div
+      ref={containerRef}
+      className="w-full rounded-lg overflow-hidden border border-slate-700"
+      style={{ height: '192px' }}
+    />
   );
 }
