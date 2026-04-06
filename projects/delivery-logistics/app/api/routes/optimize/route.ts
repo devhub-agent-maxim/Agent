@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { RoutePlanner } from "@/routes/planner";
+import { MapsClient } from "@/maps/client";
+import { Geocoder } from "@/maps/geocoder";
 import { MultiDriverPlanner } from "@/routes/multi-driver";
 import { DeliveryStop } from "@/maps/types";
 import { RouteOptimizer, DistanceMatrix } from "@/routes/optimizer";
@@ -196,15 +197,29 @@ export async function POST(request: NextRequest) {
       label: i === 0 && body.depotAddress ? "Depot" : `Stop ${i}`,
     }));
 
-    const planner = new RoutePlanner(apiKey);
+    // Geocode each stop individually — fall back to mock SG coords on failure
+    // so clustering and the map still work even if Geocoding API is unavailable.
+    const mapsClient = new MapsClient(apiKey);
+    const geocoder = new Geocoder(mapsClient);
+    let geocodeErrors = 0;
+    let geocodeErrorMsg: string | null = null;
 
     const geocodedStops = await Promise.all(
-      allStops.map(async (stop) => {
+      allStops.map(async (stop, i) => {
         try {
-          const result = await (planner as any).geocoder?.resolve(stop.address);
-          return result ? { ...stop, coordinates: result } : stop;
-        } catch {
-          return stop;
+          const coords = await geocoder.resolve(stop.address);
+          return { ...stop, coordinates: coords };
+        } catch (err) {
+          geocodeErrors++;
+          geocodeErrorMsg = err instanceof Error ? err.message : "Geocoding failed";
+          // Fallback: deterministic SG coordinates so routing is still geographic
+          return {
+            ...stop,
+            coordinates: {
+              lat: mockCoord(SG_LAT_MIN, SG_LAT_MAX, i * 2),
+              lng: mockCoord(SG_LNG_MIN, SG_LNG_MAX, i * 2 + 1),
+            },
+          };
         }
       }),
     );
@@ -224,7 +239,12 @@ export async function POST(request: NextRequest) {
       depotAddress: body.depotAddress,
     });
 
-    return NextResponse.json({ mock: false, osrm, plan });
+    return NextResponse.json({
+      mock: false,
+      osrm,
+      geocodeErrors: geocodeErrors > 0 ? `${geocodeErrors}/${allStops.length} stops failed: ${geocodeErrorMsg}` : null,
+      plan,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: message }, { status: 500 });
